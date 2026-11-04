@@ -33,11 +33,21 @@ $bundleHeader = @'
 //   $description: Display direct Join Meeting button for Microsoft Teams links
 // ==/WindhawkModSettings==
 
+#ifndef UNICODE
+#define UNICODE
+#endif
+#ifndef _UNICODE
+#define _UNICODE
+#endif
 #include <windows.h>
 #include <wininet.h>
 #include <shellapi.h>
 #ifdef WH_MOD
 #include <windhawk_api.h>
+#ifndef WH_MOD_ID
+#define WH_MOD_ID L"teams-calendar-flyout"
+#endif
+#include <windhawk_utils.h>
 #endif
 #include <string>
 #include <string_view>
@@ -95,7 +105,11 @@ function Clean-Content([string]$fileContent) {
         $trimmed = $line.Trim()
         # Skip pragma once, local includes, Windhawk metadata if inside src/
         if ($trimmed -eq "#pragma once") { continue }
-        if ($trimmed -like '#include "*"' -or $trimmed -like '#include <windhawk_api.h>') { continue }
+        if ($trimmed -like '#include "*"' -or $trimmed -like '#include <windhawk_api.h>
+#ifndef WH_MOD_ID
+#define WH_MOD_ID L"teams-calendar-flyout"
+#endif
+#include <windhawk_utils.h>') { continue }
         if ($trimmed -like '// ==WindhawkMod*' -or $trimmed -like '// @*' -or $trimmed -like '// - *' -or $trimmed -like '//   $*') { continue }
         $cleanLines += $line
     }

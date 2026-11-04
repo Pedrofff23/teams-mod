@@ -24,11 +24,21 @@
 //   $description: Display direct Join Meeting button for Microsoft Teams links
 // ==/WindhawkModSettings==
 
+#ifndef UNICODE
+#define UNICODE
+#endif
+#ifndef _UNICODE
+#define _UNICODE
+#endif
 #include <windows.h>
 #include <wininet.h>
 #include <shellapi.h>
 #ifdef WH_MOD
 #include <windhawk_api.h>
+#ifndef WH_MOD_ID
+#define WH_MOD_ID L"teams-calendar-flyout"
+#endif
+#include <windhawk_utils.h>
 #endif
 #include <string>
 #include <string_view>
@@ -2087,6 +2097,7 @@ std::string TeamsExtractor::ExtractTeamsUrl(std::string_view text) {
 #include <cctype>
 
 #ifdef WH_MOD
+#include <windhawk_api.h>
 #endif
 
 namespace calendar {
@@ -3186,6 +3197,11 @@ void XamlInjector::RenderAndInjectLocked(std::optional<CalendarDateTime> referen
 
 #include <windows.h>
 #ifdef WH_MOD
+#include <windhawk_api.h>
+#ifndef WH_MOD_ID
+#define WH_MOD_ID L"teams-calendar-flyout"
+#endif
+#include <windhawk_utils.h>
 #else
 #ifndef Wh_Log
 #define Wh_Log(...) ((void)0)

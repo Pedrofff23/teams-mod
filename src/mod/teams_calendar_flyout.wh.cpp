@@ -28,6 +28,10 @@
 #include <windows.h>
 #ifdef WH_MOD
 #include <windhawk_api.h>
+#ifndef WH_MOD_ID
+#define WH_MOD_ID L"teams-calendar-flyout"
+#endif
+#include <windhawk_utils.h>
 #else
 #ifndef Wh_Log
 #define Wh_Log(...) ((void)0)
