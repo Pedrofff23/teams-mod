@@ -4,11 +4,11 @@
 
 **Blocked by:** 01: Core RFC 5545 ICS Feed Parser and Agenda Data Model
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
-- [ ] Accurate detection and extraction of Microsoft Teams join URLs (matching `https://teams.microsoft.com/l/meetup-join/...` and related meeting domains)
-- [ ] Safe handling of URL-encoded characters, HTML formatting, and plain-text descriptions in event bodies
-- [ ] Classification of meeting temporal status relative to current system time: Live Now (ongoing), Soon (starting within 15 minutes), Future, and Past
-- [ ] Clear tagging of whether an event is a Microsoft Teams meeting versus a general calendar appointment
-- [ ] Automated tests validating detection against varied Microsoft Teams calendar payloads and edge cases
+- [x] Accurate detection and extraction of Microsoft Teams join URLs (matching `https://teams.microsoft.com/l/meetup-join/...` and related meeting domains)
+- [x] Safe handling of URL-encoded characters, HTML formatting, and plain-text descriptions in event bodies
+- [x] Classification of meeting temporal status relative to current system time: Live Now (ongoing), Soon (starting within 15 minutes), Future, and Past
+- [x] Clear tagging of whether an event is a Microsoft Teams meeting versus a general calendar appointment
+- [x] Automated tests validating detection against varied Microsoft Teams calendar payloads and edge cases
 
