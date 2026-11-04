@@ -6,6 +6,7 @@
 #include <string_view>
 #include <chrono>
 #include <shared_mutex>
+#include <functional>
 
 namespace calendar {
 
@@ -20,6 +21,8 @@ std::string_view to_string(FetchStatus status);
 
 class CalendarCache {
 public:
+    using UpdateCallback = std::function<void()>;
+
     CalendarCache() = default;
     ~CalendarCache() = default;
 
@@ -59,12 +62,16 @@ public:
     // Reset the cache to initial empty state
     void Clear();
 
+    // Register callback invoked when events are updated
+    void SetOnUpdatedCallback(UpdateCallback cb);
+
 private:
     mutable std::shared_mutex mutex_;
     std::vector<CalendarEvent> events_;
     FetchStatus status_{FetchStatus::Idle};
     std::string last_error_;
     std::chrono::system_clock::time_point last_updated_time_{};
+    UpdateCallback on_updated_cb_;
 };
 
 } // namespace calendar

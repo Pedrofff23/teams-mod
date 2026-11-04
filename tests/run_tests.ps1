@@ -56,6 +56,14 @@ if (Test-Path "src/mod/teams_calendar_flyout.wh.cpp") {
     $modSources += "src/mod/teams_calendar_flyout.wh.cpp"
 }
 
+$uiSources = @()
+if (Test-Path "src/ui/agenda_view_model.cpp") {
+    $uiSources += "src/ui/agenda_view_model.cpp"
+}
+if (Test-Path "src/ui/xaml_injector.cpp") {
+    $uiSources += "src/ui/xaml_injector.cpp"
+}
+
 if ($Suite -eq "all" -or $Suite -eq "ics") {
     Run-TestDll "build_test_ics.dll" "tests/test_ics_parser.cpp" $engineSources
 }
@@ -65,7 +73,11 @@ if ($Suite -eq "all" -or $Suite -eq "teams") {
 }
 
 if ($Suite -eq "all" -or $Suite -eq "mod") {
-    Run-TestDll "build_test_mod.dll" "tests/test_mod_skeleton_http.cpp" ($engineSources + $modSources + @("-lwininet", "-lole32", "-lshell32"))
+    Run-TestDll "build_test_mod.dll" "tests/test_mod_skeleton_http.cpp" ($engineSources + $modSources + $uiSources + @("-lwininet", "-lole32", "-lshell32"))
+}
+
+if ($Suite -eq "all" -or $Suite -eq "ui") {
+    Run-TestDll "build_test_ui.dll" "tests/test_agenda_ui.cpp" ($engineSources + $modSources + $uiSources + @("-lwininet", "-lole32", "-lshell32"))
 }
 
 Write-Host "All requested test suites passed!"

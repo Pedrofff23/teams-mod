@@ -33,7 +33,8 @@
 namespace calendar {
 
 ModLifecycleManager::ModLifecycleManager()
-    : cache_(std::make_shared<CalendarCache>()) {}
+    : cache_(std::make_shared<CalendarCache>()),
+      injector_(std::make_shared<XamlInjector>()) {}
 
 ModLifecycleManager::~ModLifecycleManager() {
     Uninitialize();
@@ -52,6 +53,22 @@ bool ModLifecycleManager::Initialize() {
 
     settings_.LoadFromWindhawk();
 
+    if (!injector_) {
+        injector_ = std::make_shared<XamlInjector>();
+    }
+    injector_->Initialize(cache_, settings_, custom_adapter_);
+
+    cache_->SetOnUpdatedCallback([this]() {
+        std::shared_ptr<XamlInjector> inj;
+        {
+            std::lock_guard<std::mutex> lk(mutex_);
+            inj = injector_;
+        }
+        if (inj) {
+            inj->OnEventsUpdated();
+        }
+    });
+
     fetcher_ = std::make_shared<HttpFetcher>(cache_, custom_transport_);
     fetcher_->Start(settings_);
 
@@ -69,6 +86,9 @@ void ModLifecycleManager::OnSettingsChanged() {
     if (fetcher_) {
         fetcher_->UpdateSettings(settings_);
     }
+    if (injector_) {
+        injector_->OnSettingsChanged(settings_);
+    }
 }
 
 void ModLifecycleManager::Uninitialize() {
@@ -82,7 +102,13 @@ void ModLifecycleManager::Uninitialize() {
         fetcher_.reset();
     }
 
+    if (injector_) {
+        injector_->Shutdown();
+        injector_.reset();
+    }
+
     if (cache_) {
+        cache_->SetOnUpdatedCallback(nullptr);
         cache_->Clear();
     }
 
@@ -104,6 +130,11 @@ std::shared_ptr<HttpFetcher> ModLifecycleManager::GetFetcher() const {
     return fetcher_;
 }
 
+std::shared_ptr<XamlInjector> ModLifecycleManager::GetInjector() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return injector_;
+}
+
 ModSettings ModLifecycleManager::GetSettings() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return settings_;
@@ -119,11 +150,23 @@ void ModLifecycleManager::SetCustomTransport(std::shared_ptr<IHttpTransport> tra
     }
 }
 
+void ModLifecycleManager::SetCustomXamlAdapter(std::shared_ptr<IXamlHostAdapter> adapter) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    custom_adapter_ = std::move(adapter);
+    if (injector_ && initialized_) {
+        injector_->Shutdown();
+        injector_->Initialize(cache_, settings_, custom_adapter_);
+    }
+}
+
 void ModLifecycleManager::SetSettingsForTesting(const ModSettings& settings) {
     std::lock_guard<std::mutex> lock(mutex_);
     settings_ = settings;
     if (fetcher_ && initialized_) {
         fetcher_->UpdateSettings(settings_);
+    }
+    if (injector_ && initialized_) {
+        injector_->OnSettingsChanged(settings_);
     }
 }
 
@@ -133,10 +176,16 @@ void ModLifecycleManager::ResetForTesting() {
         fetcher_->Stop();
         fetcher_.reset();
     }
+    if (injector_) {
+        injector_->Shutdown();
+        injector_.reset();
+    }
     if (cache_) {
+        cache_->SetOnUpdatedCallback(nullptr);
         cache_->Clear();
     }
     custom_transport_.reset();
+    custom_adapter_.reset();
     settings_ = ModSettings();
     initialized_ = false;
 }

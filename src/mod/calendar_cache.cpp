@@ -32,11 +32,19 @@ void CalendarCache::UpdateEvents(std::vector<CalendarEvent> new_events) {
         return a.end_time < b.end_time;
     });
 
-    std::unique_lock<std::shared_mutex> lock(mutex_);
-    events_ = std::move(new_events);
-    status_ = FetchStatus::Succeeded;
-    last_error_.clear();
-    last_updated_time_ = std::chrono::system_clock::now();
+    UpdateCallback cb;
+    {
+        std::unique_lock<std::shared_mutex> lock(mutex_);
+        events_ = std::move(new_events);
+        status_ = FetchStatus::Succeeded;
+        last_error_.clear();
+        last_updated_time_ = std::chrono::system_clock::now();
+        cb = on_updated_cb_;
+    }
+
+    if (cb) {
+        cb();
+    }
 }
 
 std::vector<CalendarEvent> CalendarCache::GetEventsSnapshot() const {
@@ -93,6 +101,11 @@ void CalendarCache::Clear() {
     status_ = FetchStatus::Idle;
     last_error_.clear();
     last_updated_time_ = {};
+}
+
+void CalendarCache::SetOnUpdatedCallback(UpdateCallback cb) {
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    on_updated_cb_ = std::move(cb);
 }
 
 } // namespace calendar

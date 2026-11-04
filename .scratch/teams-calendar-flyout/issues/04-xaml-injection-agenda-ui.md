@@ -4,12 +4,11 @@
 
 **Blocked by:** 03: Windhawk Mod Skeleton, Settings Schema and Background HTTP Fetcher
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
-- [ ] Successful interception and hook into the Windows 11 calendar XAML visual tree
-- [ ] Safe injection and layout bounds handling inside `CalendarCenterGrid` preventing overflow or visual clipping
-- [ ] Rich card presentation for each event showing title, time span, physical/virtual location, and Microsoft Teams visual badge
-- [ ] Real-time visual status cues for ongoing ("Live / Now") and impending ("Starting Soon") meetings
-- [ ] Responsive date change binding: clicking another day on the calendar grid immediately updates the agenda list for that date
-- [ ] Seamless support for both Windows 11 Dark and Light system themes
-
+- [x] Successful interception and hook into the Windows 11 calendar XAML visual tree
+- [x] Safe injection and layout bounds handling inside `CalendarCenterGrid` preventing overflow or visual clipping
+- [x] Rich card presentation for each event showing title, time span, physical/virtual location, and Microsoft Teams visual badge
+- [x] Real-time visual status cues for ongoing ("Live / Now") and impending ("Starting Soon") meetings
+- [x] Responsive date change binding: clicking another day on the calendar grid immediately updates the agenda list for that date
+- [x] Seamless support for both Windows 11 Dark and Light system themes
