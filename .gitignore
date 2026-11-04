@@ -1,6 +1,7 @@
 .claude/
 .goose/
 .hermes/
+.worktrees/
 *.exe
 *.o
 *.obj
