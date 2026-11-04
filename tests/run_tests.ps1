@@ -80,5 +80,9 @@ if ($Suite -eq "all" -or $Suite -eq "ui") {
     Run-TestDll "build_test_ui.dll" "tests/test_agenda_ui.cpp" ($engineSources + $modSources + $uiSources + @("-lwininet", "-lole32", "-lshell32"))
 }
 
+if ($Suite -eq "all" -or $Suite -eq "join" -or $Suite -eq "guide") {
+    Run-TestDll "build_test_join.dll" "tests/test_one_click_join_guide.cpp" ($engineSources + $modSources + $uiSources + @("-lwininet", "-lole32", "-lshell32"))
+}
+
 Write-Host "All requested test suites passed!"
 exit 0

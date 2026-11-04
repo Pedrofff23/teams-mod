@@ -3,8 +3,92 @@
 #include <shellapi.h>
 #include <sstream>
 #include <ctime>
+#include <cctype>
 
 namespace calendar {
+
+bool UrlSanitizer::IsSafeMeetingUrl(std::string_view url) {
+    std::string sanitized;
+    return SanitizeAndValidateUrl(url, &sanitized);
+}
+
+bool UrlSanitizer::SanitizeAndValidateUrl(std::string_view url, std::string* sanitized_out) {
+    // 1. Trim leading and trailing whitespace
+    size_t start = 0;
+    while (start < url.size() && std::isspace(static_cast<unsigned char>(url[start]))) {
+        start++;
+    }
+    size_t end = url.size();
+    while (end > start && std::isspace(static_cast<unsigned char>(url[end - 1]))) {
+        end--;
+    }
+
+    if (start >= end) {
+        return false;
+    }
+
+    std::string_view trimmed = url.substr(start, end - start);
+
+    // 2. Reject control characters (\r, \n, \0, tabs, etc.)
+    for (char c : trimmed) {
+        unsigned char uc = static_cast<unsigned char>(c);
+        if (uc < 32 || uc == 127) {
+            return false;
+        }
+    }
+
+    // 3. Find scheme separator ':'
+    size_t colon_pos = trimmed.find(':');
+    if (colon_pos == std::string_view::npos || colon_pos == 0) {
+        return false;
+    }
+
+    std::string scheme;
+    scheme.reserve(colon_pos);
+    for (size_t i = 0; i < colon_pos; ++i) {
+        char c = trimmed[i];
+        if (!std::isalnum(static_cast<unsigned char>(c)) && c != '+' && c != '-' && c != '.') {
+            return false;
+        }
+        scheme.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
+
+    // 4. Validate allowed schemes: http, https, msteams
+    if (scheme == "https" || scheme == "http") {
+        if (!trimmed.substr(colon_pos).starts_with("://")) {
+            return false;
+        }
+        // Ensure host is non-empty
+        size_t host_start = colon_pos + 3;
+        if (host_start >= trimmed.size()) {
+            return false;
+        }
+        size_t host_end = trimmed.find_first_of("/?#", host_start);
+        std::string_view host = (host_end == std::string_view::npos)
+            ? trimmed.substr(host_start)
+            : trimmed.substr(host_start, host_end - host_start);
+        if (host.empty()) {
+            return false;
+        }
+    } else if (scheme == "msteams") {
+        // e.g. msteams:/l/meetup-join/... or msteams://...
+        size_t rest_start = colon_pos + 1;
+        while (rest_start < trimmed.size() && trimmed[rest_start] == '/') {
+            rest_start++;
+        }
+        if (rest_start >= trimmed.size()) {
+            return false;
+        }
+    } else {
+        // Reject all other schemes: file, javascript, data, cmd, powershell, etc.
+        return false;
+    }
+
+    if (sanitized_out) {
+        *sanitized_out = std::string(trimmed);
+    }
+    return true;
+}
 
 std::string XamlMarkupGenerator::EscapeXml(std::string_view text) {
     std::string out;
@@ -87,13 +171,17 @@ std::string XamlMarkupGenerator::GenerateAgendaXaml(const AgendaDayViewModel& vi
                    << item.secondary_text_color << "\" TextTrimming=\"CharacterEllipsis\"/>\n";
             }
 
-            // Teams Join Button
+            // Teams Join Button (Fluent Design styled with rounded corners, icon, and hover-ready styling)
             if (item.is_teams && item.enable_join_button && !item.join_url.empty()) {
                 ss << "        <Button x:Name=\"JoinButton_" << i << "\" Tag=\""
                    << EscapeXml(item.join_url)
                    << "\" Background=\"" << item.accent_color
-                   << "\" Foreground=\"#FFFFFF\" Padding=\"10,4,10,4\" CornerRadius=\"4\" HorizontalAlignment=\"Left\" Margin=\"0,4,0,0\">\n";
-                ss << "          <TextBlock Text=\"Join Meeting\" FontWeight=\"SemiBold\" FontSize=\"12\"/>\n";
+                   << "\" Foreground=\"#FFFFFF\" BorderThickness=\"1\" BorderBrush=\"#00000000\" "
+                   << "CornerRadius=\"4\" Padding=\"10,4,10,4\" HorizontalAlignment=\"Left\" Margin=\"0,4,0,0\">\n";
+                ss << "          <StackPanel Orientation=\"Horizontal\" Spacing=\"6\" VerticalAlignment=\"Center\">\n";
+                ss << "            <TextBlock Text=\"&#xE714;\" FontFamily=\"Segoe Fluent Icons\" FontSize=\"12\" VerticalAlignment=\"Center\"/>\n";
+                ss << "            <TextBlock Text=\"Join Meeting\" FontWeight=\"SemiBold\" FontSize=\"12\" VerticalAlignment=\"Center\"/>\n";
+                ss << "          </StackPanel>\n";
                 ss << "        </Button>\n";
             }
 
@@ -149,16 +237,17 @@ ThemeMode WinUiXamlHostAdapter::DetectThemeMode() const {
 }
 
 bool WinUiXamlHostAdapter::OpenMeetingUrl(std::string_view url) {
-    if (url.empty()) {
+    std::string sanitized;
+    if (!UrlSanitizer::SanitizeAndValidateUrl(url, &sanitized)) {
         return false;
     }
 
-    int wlen = MultiByteToWideChar(CP_UTF8, 0, url.data(), static_cast<int>(url.size()), nullptr, 0);
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, sanitized.data(), static_cast<int>(sanitized.size()), nullptr, 0);
     if (wlen <= 0) {
         return false;
     }
     std::wstring wurl(wlen, L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, url.data(), static_cast<int>(url.size()), wurl.data(), wlen);
+    MultiByteToWideChar(CP_UTF8, 0, sanitized.data(), static_cast<int>(sanitized.size()), wurl.data(), wlen);
 
     HINSTANCE hInst = ShellExecuteW(nullptr, L"open", wurl.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     return reinterpret_cast<INT_PTR>(hInst) > 32;
@@ -233,6 +322,10 @@ void XamlInjector::OnEventsUpdated(std::optional<CalendarDateTime> reference_tim
 }
 
 bool XamlInjector::HandleJoinButtonClick(std::string_view join_url) {
+    if (!UrlSanitizer::IsSafeMeetingUrl(join_url)) {
+        return false;
+    }
+
     std::shared_ptr<IXamlHostAdapter> adapter;
     {
         std::lock_guard<std::mutex> lock(mutex_);

@@ -24,6 +24,8 @@ struct ThemePalette {
     std::string primary_text;
     std::string secondary_text;
     std::string teams_accent;
+    std::string teams_accent_hover;
+    std::string teams_accent_pressed;
     std::string live_badge_bg;
     std::string live_badge_fg;
     std::string soon_badge_bg;
@@ -55,6 +57,8 @@ struct AgendaItemViewModel {
     std::string primary_text_color;
     std::string secondary_text_color;
     std::string accent_color;
+    std::string accent_hover_color;
+    std::string accent_pressed_color;
     bool is_all_day{false};
     int64_t start_unix{0};
     int64_t end_unix{0};

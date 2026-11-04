@@ -24,6 +24,16 @@ public:
     virtual bool OpenMeetingUrl(std::string_view url) = 0;
 };
 
+// Validates and sanitizes meeting join URLs to prevent command injection
+class UrlSanitizer {
+public:
+    // Returns true if url has an approved protocol scheme (http, https, msteams) and contains no dangerous characters
+    static bool IsSafeMeetingUrl(std::string_view url);
+
+    // Trims whitespace and validates URL safety
+    static bool SanitizeAndValidateUrl(std::string_view url, std::string* sanitized_out = nullptr);
+};
+
 // Generates WinUI / XAML markup strings for the agenda panel
 class XamlMarkupGenerator {
 public:
@@ -81,6 +91,11 @@ public:
 
     // Invoked when user clicks a Join Meeting button
     bool HandleJoinButtonClick(std::string_view join_url);
+
+    // URL validation helper
+    static bool IsSafeMeetingUrl(std::string_view url) {
+        return UrlSanitizer::IsSafeMeetingUrl(url);
+    }
 
     // Accessors for state inspection and testing
     const CalendarDate& GetSelectedDate() const;

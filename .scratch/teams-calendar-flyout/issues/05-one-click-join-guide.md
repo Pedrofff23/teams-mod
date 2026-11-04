@@ -4,11 +4,10 @@
 
 **Blocked by:** 04: Windows 11 Calendar Flyout XAML Injection and Agenda UI
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
-- [ ] Interactive click action on Teams cards invoking Windows system handler to launch the meeting URL in Microsoft Teams or browser
-- [ ] Hover and click visual feedback matching Windows 11 Fluent Design principles
-- [ ] Comprehensive tutorial document (`TUTORIAL_MOD_WINDHAWK.md`) detailing mod anatomy, Windhawk UI compilation workflow, and log inspection
-- [ ] Step-by-step instructions for extracting the secret ICS calendar link from Outlook on the Web / Microsoft 365
-- [ ] End-to-end operational verification of the complete mod loaded in Windhawk on Windows 11
-
+- [x] Interactive click action on Teams cards invoking Windows system handler to launch the meeting URL in Microsoft Teams or browser
+- [x] Hover and click visual feedback matching Windows 11 Fluent Design principles
+- [x] Comprehensive tutorial document (`TUTORIAL_MOD_WINDHAWK.md`) detailing mod anatomy, Windhawk UI compilation workflow, and log inspection
+- [x] Step-by-step instructions for extracting the secret ICS calendar link from Outlook on the Web / Microsoft 365
+- [x] End-to-end operational verification of the complete mod loaded in Windhawk on Windows 11

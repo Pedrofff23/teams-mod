@@ -36,6 +36,8 @@ ThemePalette ThemePalette::ForTheme(ThemeMode mode) {
         p.primary_text = "#1A1A1A";
         p.secondary_text = "#5C5C5C";
         p.teams_accent = "#464EB8";
+        p.teams_accent_hover = "#5B63D3";
+        p.teams_accent_pressed = "#3B429F";
         p.live_badge_bg = "#107C41";
         p.live_badge_fg = "#FFFFFF";
         p.soon_badge_bg = "#D83B01";
@@ -54,6 +56,8 @@ ThemePalette ThemePalette::ForTheme(ThemeMode mode) {
         p.primary_text = "#FFFFFF";
         p.secondary_text = "#FFFF00";
         p.teams_accent = "#00FFFF";
+        p.teams_accent_hover = "#33FFFF";
+        p.teams_accent_pressed = "#00CCCC";
         p.live_badge_bg = "#008000";
         p.live_badge_fg = "#FFFFFF";
         p.soon_badge_bg = "#FFA500";
@@ -73,6 +77,8 @@ ThemePalette ThemePalette::ForTheme(ThemeMode mode) {
         p.primary_text = "#FFFFFF";
         p.secondary_text = "#CCCCCC";
         p.teams_accent = "#6264A7";
+        p.teams_accent_hover = "#7B7DC4";
+        p.teams_accent_pressed = "#51538C";
         p.live_badge_bg = "#107C41";
         p.live_badge_fg = "#FFFFFF";
         p.soon_badge_bg = "#D83B01";
@@ -138,6 +144,8 @@ AgendaItemViewModel AgendaItemViewModel::FromCalendarEvent(
     vm.primary_text_color = palette.primary_text;
     vm.secondary_text_color = palette.secondary_text;
     vm.accent_color = palette.teams_accent;
+    vm.accent_hover_color = palette.teams_accent_hover;
+    vm.accent_pressed_color = palette.teams_accent_pressed;
 
     vm.formatted_time_range = AgendaPresenter::FormatTimeRange(event.start_time, event.end_time, event.is_all_day);
 
