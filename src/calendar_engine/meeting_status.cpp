@@ -54,20 +54,7 @@ MeetingTemporalStatus MeetingStatusCalculator::CalculateStatus(const CalendarEve
 }
 
 void MeetingStatusCalculator::EnrichEvent(CalendarEvent& event, const CalendarDateTime& reference_time) {
-    std::string teams_url = TeamsExtractor::ExtractFromEvent(event);
-
-    if (!teams_url.empty()) {
-        event.is_teams_meeting = true;
-        event.teams_join_url = teams_url;
-        event.teams_url = teams_url;
-    } else {
-        event.is_teams_meeting = false;
-        event.teams_join_url = "";
-        event.teams_url = "";
-    }
-
-    // 2. Temporal status calculation
-    event.temporal_status = CalculateStatus(event, reference_time);
+    event.enrich_teams_and_status(reference_time);
 }
 
 void MeetingStatusCalculator::EnrichEvents(std::vector<CalendarEvent>& events, const CalendarDateTime& reference_time) {

@@ -28,6 +28,10 @@
 #include <windows.h>
 #ifdef WH_MOD
 #include <windhawk_api.h>
+#else
+#ifndef Wh_Log
+#define Wh_Log(...) ((void)0)
+#endif
 #endif
 
 namespace calendar {
@@ -192,15 +196,49 @@ void ModLifecycleManager::ResetForTesting() {
 
 } // namespace calendar
 
+#ifdef WH_MOD
+// Symbol hook declarations for ShellHost.exe calendar view
+typedef void (WINAPI *CalendarView_OnSelectedDatesChanged_t)(void* pThis, void* pArgs);
+static CalendarView_OnSelectedDatesChanged_t pOriginalCalendarView_OnSelectedDatesChanged = nullptr;
+
+static void WINAPI Hook_CalendarView_OnSelectedDatesChanged(void* pThis, void* pArgs) {
+    if (pOriginalCalendarView_OnSelectedDatesChanged) {
+        pOriginalCalendarView_OnSelectedDatesChanged(pThis, pArgs);
+    }
+    Wh_Log(L"CalendarView selected date changed in ShellHost");
+    auto injector = calendar::ModLifecycleManager::Instance().GetInjector();
+    if (injector) {
+        injector->OnDateSelected(injector->GetSelectedDate());
+    }
+}
+#endif
+
 // Windhawk mod entry points
 extern "C" __declspec(dllexport) BOOL Wh_ModInit() {
+    Wh_Log(L"Teams Calendar Flyout initializing");
+#ifdef WH_MOD
+    const WindhawkUtils::SYMBOL_HOOK hooks[] = {
+        {
+            {
+                L"private: void __cdecl winrt::Windows::UI::Xaml::Controls::CalendarView::OnSelectedDatesChanged(struct winrt::Windows::UI::Xaml::Controls::CalendarViewSelectedDatesChangedEventArgs const &)",
+                L"?OnSelectedDatesChanged@CalendarView@Controls@Xaml@UI@winrt@@AEAAXAEBUCalendarViewSelectedDatesChangedEventArgs@2345@@Z"
+            },
+            &pOriginalCalendarView_OnSelectedDatesChanged,
+            Hook_CalendarView_OnSelectedDatesChanged,
+            true // optional
+        }
+    };
+    WindhawkUtils::HookSymbols(GetModuleHandleW(nullptr), hooks, ARRAYSIZE(hooks));
+#endif
     return calendar::ModLifecycleManager::Instance().Initialize() ? TRUE : FALSE;
 }
 
 extern "C" __declspec(dllexport) void Wh_ModSettingsChanged() {
+    Wh_Log(L"Teams Calendar Flyout settings changed");
     calendar::ModLifecycleManager::Instance().OnSettingsChanged();
 }
 
 extern "C" __declspec(dllexport) void Wh_ModUninit() {
+    Wh_Log(L"Teams Calendar Flyout uninitializing");
     calendar::ModLifecycleManager::Instance().Uninitialize();
 }

@@ -18,6 +18,9 @@ struct CalendarDate {
     auto operator<=>(const CalendarDate&) const = default;
     bool operator==(const CalendarDate&) const = default;
 
+    // Returns day of week: 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+    int day_of_week() const;
+
     std::string to_string() const;
     static std::optional<CalendarDate> from_string(std::string_view str);
 };
@@ -48,6 +51,9 @@ struct CalendarDateTime {
     // Construct CalendarDateTime from seconds since Unix epoch
     static CalendarDateTime from_unix_timestamp(int64_t timestamp_seconds, bool is_utc = true);
 
+    // Current local time
+    static CalendarDateTime now_local(std::optional<int> tz_offset_minutes = std::nullopt);
+
     // Normalize to local time using offset in minutes
     CalendarDateTime to_local(int local_offset_minutes) const;
 
@@ -61,6 +67,36 @@ enum class EventStatus {
     Cancelled
 };
 
+enum class RecurrenceFrequency {
+    None,
+    Daily,
+    Weekly,
+    Monthly,
+    Yearly
+};
+
+enum class Weekday {
+    Sunday = 0,
+    Monday = 1,
+    Tuesday = 2,
+    Wednesday = 3,
+    Thursday = 4,
+    Friday = 5,
+    Saturday = 6
+};
+
+struct RecurrenceRule {
+    RecurrenceFrequency freq{RecurrenceFrequency::None};
+    int interval{1};
+    std::optional<int> count;
+    std::optional<CalendarDateTime> until;
+    std::vector<Weekday> by_day;
+
+    bool is_recurring() const { return freq != RecurrenceFrequency::None; }
+    bool matches(const CalendarDateTime& dtstart, const CalendarDate& target_date) const;
+    static RecurrenceRule Parse(std::string_view rrule_str, int local_tz_offset_minutes = 0);
+};
+
 struct CalendarEvent {
     std::string uid;
     std::string summary;
@@ -70,13 +106,19 @@ struct CalendarEvent {
     CalendarDateTime end_time;
     bool is_all_day{false};
     EventStatus status{EventStatus::Confirmed};
-    std::string teams_url;
     bool is_teams_meeting{false};
     std::string teams_join_url;
     MeetingTemporalStatus temporal_status{MeetingTemporalStatus::Future};
+    RecurrenceRule rrule;
 
-    // Returns whether this event occurs on the given date (based on local start/end times)
+    // Enrich event with Teams URL extraction and temporal status calculation
+    void enrich_teams_and_status(const CalendarDateTime& ref_time);
+
+    // Returns whether this event occurs on the given date (supporting recurring events)
     bool occurs_on(const CalendarDate& target_date) const;
+
+    // Generates an occurrence instance of this event on target_date
+    CalendarEvent generate_instance_for_date(const CalendarDate& target_date) const;
 };
 
 class IcsParser {
@@ -93,6 +135,9 @@ public:
 
     // Parse a date or datetime string according to RFC 5545 specifications
     CalendarDateTime ParseDateTime(std::string_view dt_str, std::string_view params = "") const;
+
+    // Static version of ParseDateTime for utility usage
+    static CalendarDateTime ParseDateTimeStatic(std::string_view dt_str, std::string_view params = "");
 
     // Parse full RFC 5545 iCalendar content into a list of normalized CalendarEvents
     std::vector<CalendarEvent> Parse(std::string_view ics_content) const;

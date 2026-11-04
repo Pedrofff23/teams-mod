@@ -405,6 +405,95 @@ bool TestEdgeCasesAndRobustness() {
     return true;
 }
 
+bool TestRecurrenceRuleExpansion() {
+    std::cout << "Running TestRecurrenceRuleExpansion..." << std::endl;
+
+    std::string feed =
+        "BEGIN:VCALENDAR\r\n"
+        "VERSION:2.0\r\n"
+        // 1. Weekly Standup on Monday, Wednesday, Friday
+        "BEGIN:VEVENT\r\n"
+        "UID:recurring-standup\r\n"
+        "SUMMARY:Engineering Standup\r\n"
+        "DTSTART:20261102T090000Z\r\n" // Nov 2, 2026 is a Monday
+        "DTEND:20261102T093000Z\r\n"
+        "RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR\r\n"
+        "DESCRIPTION:Daily standup via Teams\r\n"
+        "END:VEVENT\r\n"
+        // 2. Daily Standup with UNTIL Nov 5
+        "BEGIN:VEVENT\r\n"
+        "UID:recurring-daily-until\r\n"
+        "SUMMARY:Sprint Daily Sync\r\n"
+        "DTSTART:20261101T140000Z\r\n"
+        "DTEND:20261101T143000Z\r\n"
+        "RRULE:FREQ=DAILY;UNTIL=20261105T000000Z\r\n"
+        "END:VEVENT\r\n"
+        // 3. Daily with COUNT=3
+        "BEGIN:VEVENT\r\n"
+        "UID:recurring-daily-count\r\n"
+        "SUMMARY:3-Day Workshop\r\n"
+        "DTSTART:20261110T100000Z\r\n"
+        "DTEND:20261110T120000Z\r\n"
+        "RRULE:FREQ=DAILY;COUNT=3\r\n"
+        "END:VEVENT\r\n"
+        "END:VCALENDAR\r\n";
+
+    IcsParser parser(0);
+    auto all_events = parser.Parse(feed);
+    TEST_ASSERT(all_events.size() == 3, "Parsed 3 recurring events");
+
+    // Nov 2, 2026 is Monday -> Standup matches
+    auto monday_events = parser.GetEventsForDate(all_events, CalendarDate{2026, 11, 2});
+    TEST_ASSERT(monday_events.size() >= 2, "Monday has Standup + Daily Sync");
+    bool found_standup_mon = false;
+    for (const auto& ev : monday_events) {
+        if (ev.uid == "recurring-standup") {
+            found_standup_mon = true;
+            TEST_ASSERT(ev.start_time.date == (CalendarDate{2026, 11, 2}), "Instance start date is Nov 2");
+            TEST_ASSERT(ev.start_time.time.hour == 9, "Start time hour is 9");
+        }
+    }
+    TEST_ASSERT(found_standup_mon, "Standup occurs on Monday");
+
+    // Nov 3, 2026 is Tuesday -> Standup should NOT occur (only MO,WE,FR)
+    auto tuesday_events = parser.GetEventsForDate(all_events, CalendarDate{2026, 11, 3});
+    for (const auto& ev : tuesday_events) {
+        TEST_ASSERT(ev.uid != "recurring-standup", "Standup must not occur on Tuesday");
+    }
+
+    // Nov 4, 2026 is Wednesday -> Standup DOES occur
+    auto wednesday_events = parser.GetEventsForDate(all_events, CalendarDate{2026, 11, 4});
+    bool found_standup_wed = false;
+    for (const auto& ev : wednesday_events) {
+        if (ev.uid == "recurring-standup") {
+            found_standup_wed = true;
+            TEST_ASSERT(ev.start_time.date == (CalendarDate{2026, 11, 4}), "Wednesday instance date matches");
+        }
+    }
+    TEST_ASSERT(found_standup_wed, "Standup occurs on Wednesday");
+
+    // Nov 5, 2026 -> Daily sync UNTIL Nov 5 00:00:00Z should NOT occur (or expired)
+    auto nov6_events = parser.GetEventsForDate(all_events, CalendarDate{2026, 11, 6});
+    for (const auto& ev : nov6_events) {
+        TEST_ASSERT(ev.uid != "recurring-daily-until", "Daily sync must not occur past UNTIL date");
+    }
+
+    // COUNT=3 check: Nov 10 (1), Nov 11 (2), Nov 12 (3), but NOT Nov 13 (4)
+    auto nov12_events = parser.GetEventsForDate(all_events, CalendarDate{2026, 11, 12});
+    bool found_workshop_nov12 = false;
+    for (const auto& ev : nov12_events) {
+        if (ev.uid == "recurring-daily-count") found_workshop_nov12 = true;
+    }
+    TEST_ASSERT(found_workshop_nov12, "Workshop occurs on 3rd day (Nov 12)");
+
+    auto nov13_events = parser.GetEventsForDate(all_events, CalendarDate{2026, 11, 13});
+    for (const auto& ev : nov13_events) {
+        TEST_ASSERT(ev.uid != "recurring-daily-count", "Workshop must not occur on 4th day (exceeds COUNT=3)");
+    }
+
+    return true;
+}
+
 } // namespace
 
 int RunAllTests() {
@@ -421,9 +510,10 @@ int RunAllTests() {
     if (!TestChronologicalSortingAndFiltering()) return 7;
     if (!TestRealWorldFeedWithEscapingAndMultiline()) return 8;
     if (!TestEdgeCasesAndRobustness()) return 9;
+    if (!TestRecurrenceRuleExpansion()) return 10;
 
     std::cout << "=========================================" << std::endl;
-    std::cout << "ALL 9 TEST SUITES PASSED SUCCESSFULLY!" << std::endl;
+    std::cout << "ALL 10 TEST SUITES PASSED SUCCESSFULLY!" << std::endl;
     std::cout << "=========================================" << std::endl;
     return 0;
 }

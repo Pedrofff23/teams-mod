@@ -131,8 +131,8 @@ std::string XamlMarkupGenerator::GenerateAgendaXaml(const AgendaDayViewModel& vi
     } else {
         for (size_t i = 0; i < viewModel.items.size(); ++i) {
             const auto& item = viewModel.items[i];
-            ss << "    <Border x:Name=\"MeetingCard_" << i << "\" Background=\"" << item.card_bg
-               << "\" BorderBrush=\"" << item.card_border
+            ss << "    <Border x:Name=\"MeetingCard_" << i << "\" Background=\"" << item.card_bg()
+               << "\" BorderBrush=\"" << item.card_border()
                << "\" BorderThickness=\"1\" CornerRadius=\"6\" Padding=\"10,8,10,8\" Margin=\"0,2,0,2\">\n";
             ss << "      <StackPanel Spacing=\"4\">\n";
 
@@ -141,7 +141,7 @@ std::string XamlMarkupGenerator::GenerateAgendaXaml(const AgendaDayViewModel& vi
             ss << "          <TextBlock Grid.Column=\"0\" Text=\""
                << EscapeXml(item.formatted_time_range)
                << "\" FontSize=\"12\" FontWeight=\"SemiBold\" Foreground=\""
-               << item.secondary_text_color << "\"/>\n";
+               << item.secondary_text_color() << "\"/>\n";
             ss << "          <StackPanel Grid.Column=\"2\" Orientation=\"Horizontal\" Spacing=\"6\" HorizontalAlignment=\"Right\">\n";
             ss << "            <Border Background=\"" << item.status_badge_bg
                << "\" CornerRadius=\"3\" Padding=\"5,1,5,1\">\n";
@@ -151,7 +151,7 @@ std::string XamlMarkupGenerator::GenerateAgendaXaml(const AgendaDayViewModel& vi
             ss << "            </Border>\n";
 
             if (item.is_teams) {
-                ss << "            <Border Background=\"" << item.accent_color
+                ss << "            <Border Background=\"" << item.accent_color()
                    << "\" CornerRadius=\"3\" Padding=\"4,1,4,1\">\n";
                 ss << "              <TextBlock Text=\"Teams\" FontSize=\"10\" FontWeight=\"Bold\" Foreground=\"#FFFFFF\"/>\n";
                 ss << "            </Border>\n";
@@ -162,20 +162,20 @@ std::string XamlMarkupGenerator::GenerateAgendaXaml(const AgendaDayViewModel& vi
             // Title
             ss << "        <TextBlock Text=\"" << EscapeXml(item.title)
                << "\" FontSize=\"13\" FontWeight=\"Bold\" TextWrapping=\"Wrap\" Foreground=\""
-               << item.primary_text_color << "\"/>\n";
+               << item.primary_text_color() << "\"/>\n";
 
             // Location if non-empty
             if (!item.location.empty()) {
                 ss << "        <TextBlock Text=\"" << EscapeXml(item.location)
                    << "\" FontSize=\"11\" Foreground=\""
-                   << item.secondary_text_color << "\" TextTrimming=\"CharacterEllipsis\"/>\n";
+                   << item.secondary_text_color() << "\" TextTrimming=\"CharacterEllipsis\"/>\n";
             }
 
             // Teams Join Button (Fluent Design styled with rounded corners, icon, and hover-ready styling)
             if (item.is_teams && item.enable_join_button && !item.join_url.empty()) {
                 ss << "        <Button x:Name=\"JoinButton_" << i << "\" Tag=\""
                    << EscapeXml(item.join_url)
-                   << "\" Background=\"" << item.accent_color
+                   << "\" Background=\"" << item.accent_color()
                    << "\" Foreground=\"#FFFFFF\" BorderThickness=\"1\" BorderBrush=\"#00000000\" "
                    << "CornerRadius=\"4\" Padding=\"10,4,10,4\" HorizontalAlignment=\"Left\" Margin=\"0,4,0,0\">\n";
                 ss << "          <StackPanel Orientation=\"Horizontal\" Spacing=\"6\" VerticalAlignment=\"Center\">\n";
@@ -363,13 +363,7 @@ AgendaDayViewModel XamlInjector::GetCurrentViewModel() const {
 }
 
 void XamlInjector::RenderAndInjectLocked(std::optional<CalendarDateTime> reference_time) {
-    CalendarDateTime ref_time;
-    if (reference_time.has_value()) {
-        ref_time = *reference_time;
-    } else {
-        std::time_t t = std::time(nullptr);
-        ref_time = CalendarDateTime::from_unix_timestamp(static_cast<int64_t>(t));
-    }
+    CalendarDateTime ref_time = reference_time.has_value() ? *reference_time : CalendarDateTime::now_local();
 
     if (cache_) {
         current_view_model_ = AgendaPresenter::PresentDay(

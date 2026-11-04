@@ -192,9 +192,6 @@ std::string TeamsExtractor::ExtractFromEvent(const CalendarEvent& event) {
     if (!event.teams_join_url.empty() && IsTeamsUrl(event.teams_join_url)) {
         return event.teams_join_url;
     }
-    if (!event.teams_url.empty() && IsTeamsUrl(event.teams_url)) {
-        return event.teams_url;
-    }
     if (!event.location.empty()) {
         std::string from_loc = ExtractTeamsUrl(event.location);
         if (!from_loc.empty()) return from_loc;

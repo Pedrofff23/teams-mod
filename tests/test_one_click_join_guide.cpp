@@ -231,10 +231,6 @@ bool TestSelfContainedModBundle() {
     TEST_ASSERT(mod_src.find("#include \"mod/") == std::string::npos, "Self-contained bundle must not include relative mod/ headers");
     TEST_ASSERT(mod_src.find("#include \"ui/") == std::string::npos, "Self-contained bundle must not include relative ui/ headers");
 
-    // Check dist/teams-calendar-flyout.wh.cpp exists as well
-    std::ifstream dist_file("dist/teams-calendar-flyout.wh.cpp");
-    TEST_ASSERT(dist_file.is_open(), "dist/teams-calendar-flyout.wh.cpp must exist");
-
     return true;
 }
 

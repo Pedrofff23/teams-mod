@@ -305,14 +305,14 @@ bool TestHttpFetcherPipelineSuccess() {
     TEST_ASSERT(teams_ev.uid == "sample-event-1", "UID matches event 1");
     TEST_ASSERT(teams_ev.summary == "Product Strategy Sync", "Summary matches");
     TEST_ASSERT(teams_ev.is_teams_meeting, "Event 1 must be identified as Teams meeting");
-    TEST_ASSERT(!teams_ev.teams_url.empty(), "Event 1 teams_url must be populated");
-    TEST_ASSERT(teams_ev.teams_url.find("teams.microsoft.com/l/meetup-join") != std::string::npos, "URL contains meetup-join");
+    TEST_ASSERT(!teams_ev.teams_join_url.empty(), "Event 1 teams_join_url must be populated");
+    TEST_ASSERT(teams_ev.teams_join_url.find("teams.microsoft.com/l/meetup-join") != std::string::npos, "URL contains meetup-join");
 
     // Verify second event is not a Teams meeting
     const auto& in_person_ev = events[1];
     TEST_ASSERT(in_person_ev.uid == "sample-event-2", "UID matches event 2");
     TEST_ASSERT(!in_person_ev.is_teams_meeting, "Coffee catchup is not a Teams meeting");
-    TEST_ASSERT(in_person_ev.teams_url.empty(), "No teams URL for in-person event");
+    TEST_ASSERT(in_person_ev.teams_join_url.empty(), "No teams join URL for in-person event");
 
     return true;
 }

@@ -129,15 +129,8 @@ foreach ($s in $sources) {
 
 $outputContent = $sb.ToString()
 
-# Write to root teams-calendar-flyout.wh.cpp
+# Write to canonical root teams-calendar-flyout.wh.cpp
 Set-Content -Path "teams-calendar-flyout.wh.cpp" -Value $outputContent -Encoding utf8
 Write-Host "Wrote root teams-calendar-flyout.wh.cpp ($($outputContent.Length) bytes)"
-
-# Ensure dist exists and copy to dist/teams-calendar-flyout.wh.cpp
-if (-not (Test-Path "dist")) {
-    New-Item -ItemType Directory -Path "dist" | Out-Null
-}
-Set-Content -Path "dist/teams-calendar-flyout.wh.cpp" -Value $outputContent -Encoding utf8
-Write-Host "Wrote dist/teams-calendar-flyout.wh.cpp"
 
 Write-Host "Bundle generation complete!"

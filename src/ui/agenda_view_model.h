@@ -52,16 +52,19 @@ struct AgendaItemViewModel {
     std::string status_badge_label;
     std::string status_badge_bg;
     std::string status_badge_fg;
-    std::string card_bg;
-    std::string card_border;
-    std::string primary_text_color;
-    std::string secondary_text_color;
-    std::string accent_color;
-    std::string accent_hover_color;
-    std::string accent_pressed_color;
+    ThemePalette palette;
     bool is_all_day{false};
     int64_t start_unix{0};
     int64_t end_unix{0};
+
+    // Accessors for backward compatibility and clean syntax
+    const std::string& card_bg() const { return palette.card_background; }
+    const std::string& card_border() const { return palette.card_border; }
+    const std::string& primary_text_color() const { return palette.primary_text; }
+    const std::string& secondary_text_color() const { return palette.secondary_text; }
+    const std::string& accent_color() const { return palette.teams_accent; }
+    const std::string& accent_hover_color() const { return palette.teams_accent_hover; }
+    const std::string& accent_pressed_color() const { return palette.teams_accent_pressed; }
 
     static AgendaItemViewModel FromCalendarEvent(
         const CalendarEvent& event,

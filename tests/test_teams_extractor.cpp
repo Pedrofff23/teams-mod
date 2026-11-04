@@ -293,7 +293,6 @@ bool TestCalendarEventEnrichmentAndIcsIntegration() {
     TEST_ASSERT(single_ev.is_teams_meeting, "Direct event should be identified as Teams meeting");
     TEST_ASSERT(single_ev.teams_join_url == "https://teams.microsoft.com/l/meetup-join/19%3ameeting_qbr%40thread.v2/0?context=%7b%22Tid%22%3a%22qbr-id%22%7d",
                 "teams_join_url should be set");
-    TEST_ASSERT(single_ev.teams_url == single_ev.teams_join_url, "teams_url should match teams_join_url");
     TEST_ASSERT(single_ev.temporal_status == MeetingTemporalStatus::Live, "Status should be Live at 10:20");
     TEST_ASSERT(to_string(single_ev.temporal_status) == "Live", "to_string(Live) should be 'Live'");
 
@@ -309,7 +308,6 @@ bool TestCalendarEventEnrichmentAndIcsIntegration() {
     MeetingStatusCalculator::EnrichEvent(non_teams_ev, ref_live);
     TEST_ASSERT(!non_teams_ev.is_teams_meeting, "Doctor checkup must not be identified as Teams meeting");
     TEST_ASSERT(non_teams_ev.teams_join_url.empty(), "teams_join_url must be empty");
-    TEST_ASSERT(non_teams_ev.teams_url.empty(), "teams_url must be empty");
     TEST_ASSERT(non_teams_ev.temporal_status == MeetingTemporalStatus::Future, "Doctor checkup at 14:00 is Future relative to 10:20");
 
     // 3. Full parsed ICS feed integration

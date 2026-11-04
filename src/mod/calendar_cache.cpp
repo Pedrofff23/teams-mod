@@ -61,10 +61,11 @@ std::vector<CalendarEvent> CalendarCache::GetEventsForDate(const CalendarDate& t
         if (!ev.occurs_on(target_date)) {
             continue;
         }
-        if (!show_past_events && ev.temporal_status == MeetingTemporalStatus::Past) {
+        CalendarEvent instance = ev.rrule.is_recurring() ? ev.generate_instance_for_date(target_date) : ev;
+        if (!show_past_events && instance.temporal_status == MeetingTemporalStatus::Past) {
             continue;
         }
-        result.push_back(ev);
+        result.push_back(std::move(instance));
     }
 
     return result;

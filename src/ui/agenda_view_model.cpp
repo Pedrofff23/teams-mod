@@ -129,7 +129,7 @@ AgendaItemViewModel AgendaItemViewModel::FromCalendarEvent(
     vm.title = event.summary;
     vm.location = event.location;
     vm.is_teams = event.is_teams_meeting;
-    vm.join_url = event.teams_join_url.empty() ? event.teams_url : event.teams_join_url;
+    vm.join_url = event.teams_join_url;
     vm.enable_join_button = enable_join;
     vm.is_all_day = event.is_all_day;
     vm.start_unix = event.start_time.to_unix_timestamp();
@@ -138,38 +138,31 @@ AgendaItemViewModel AgendaItemViewModel::FromCalendarEvent(
     // Recompute or verify temporal status relative to reference_time
     vm.temporal_status = MeetingStatusCalculator::CalculateStatus(event, reference_time);
 
-    ThemePalette palette = ThemePalette::ForTheme(theme);
-    vm.card_bg = palette.card_background;
-    vm.card_border = palette.card_border;
-    vm.primary_text_color = palette.primary_text;
-    vm.secondary_text_color = palette.secondary_text;
-    vm.accent_color = palette.teams_accent;
-    vm.accent_hover_color = palette.teams_accent_hover;
-    vm.accent_pressed_color = palette.teams_accent_pressed;
+    vm.palette = ThemePalette::ForTheme(theme);
 
     vm.formatted_time_range = AgendaPresenter::FormatTimeRange(event.start_time, event.end_time, event.is_all_day);
 
     switch (vm.temporal_status) {
     case MeetingTemporalStatus::Live:
         vm.status_badge_label = "Live Now";
-        vm.status_badge_bg = palette.live_badge_bg;
-        vm.status_badge_fg = palette.live_badge_fg;
+        vm.status_badge_bg = vm.palette.live_badge_bg;
+        vm.status_badge_fg = vm.palette.live_badge_fg;
         break;
     case MeetingTemporalStatus::Soon:
         vm.status_badge_label = "Starting Soon";
-        vm.status_badge_bg = palette.soon_badge_bg;
-        vm.status_badge_fg = palette.soon_badge_fg;
+        vm.status_badge_bg = vm.palette.soon_badge_bg;
+        vm.status_badge_fg = vm.palette.soon_badge_fg;
         break;
     case MeetingTemporalStatus::Past:
         vm.status_badge_label = "Past";
-        vm.status_badge_bg = palette.past_badge_bg;
-        vm.status_badge_fg = palette.past_badge_fg;
+        vm.status_badge_bg = vm.palette.past_badge_bg;
+        vm.status_badge_fg = vm.palette.past_badge_fg;
         break;
     case MeetingTemporalStatus::Future:
     default:
         vm.status_badge_label = "Upcoming";
-        vm.status_badge_bg = palette.upcoming_badge_bg;
-        vm.status_badge_fg = palette.upcoming_badge_fg;
+        vm.status_badge_bg = vm.palette.upcoming_badge_bg;
+        vm.status_badge_fg = vm.palette.upcoming_badge_fg;
         break;
     }
 
@@ -205,8 +198,10 @@ AgendaDayViewModel AgendaPresenter::PresentEvents(
             continue;
         }
 
+        CalendarEvent instance = ev.rrule.is_recurring() ? ev.generate_instance_for_date(date) : ev;
+
         AgendaItemViewModel vm = AgendaItemViewModel::FromCalendarEvent(
-            ev, theme, reference_time, enable_join_button
+            instance, theme, reference_time, enable_join_button
         );
 
         if (!show_past_events && vm.temporal_status == MeetingTemporalStatus::Past) {

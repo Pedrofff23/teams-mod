@@ -111,6 +111,9 @@ struct CalendarDate {
     auto operator<=>(const CalendarDate&) const = default;
     bool operator==(const CalendarDate&) const = default;
 
+    // Returns day of week: 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+    int day_of_week() const;
+
     std::string to_string() const;
     static std::optional<CalendarDate> from_string(std::string_view str);
 };
@@ -141,6 +144,9 @@ struct CalendarDateTime {
     // Construct CalendarDateTime from seconds since Unix epoch
     static CalendarDateTime from_unix_timestamp(int64_t timestamp_seconds, bool is_utc = true);
 
+    // Current local time
+    static CalendarDateTime now_local(std::optional<int> tz_offset_minutes = std::nullopt);
+
     // Normalize to local time using offset in minutes
     CalendarDateTime to_local(int local_offset_minutes) const;
 
@@ -154,6 +160,36 @@ enum class EventStatus {
     Cancelled
 };
 
+enum class RecurrenceFrequency {
+    None,
+    Daily,
+    Weekly,
+    Monthly,
+    Yearly
+};
+
+enum class Weekday {
+    Sunday = 0,
+    Monday = 1,
+    Tuesday = 2,
+    Wednesday = 3,
+    Thursday = 4,
+    Friday = 5,
+    Saturday = 6
+};
+
+struct RecurrenceRule {
+    RecurrenceFrequency freq{RecurrenceFrequency::None};
+    int interval{1};
+    std::optional<int> count;
+    std::optional<CalendarDateTime> until;
+    std::vector<Weekday> by_day;
+
+    bool is_recurring() const { return freq != RecurrenceFrequency::None; }
+    bool matches(const CalendarDateTime& dtstart, const CalendarDate& target_date) const;
+    static RecurrenceRule Parse(std::string_view rrule_str, int local_tz_offset_minutes = 0);
+};
+
 struct CalendarEvent {
     std::string uid;
     std::string summary;
@@ -163,13 +199,19 @@ struct CalendarEvent {
     CalendarDateTime end_time;
     bool is_all_day{false};
     EventStatus status{EventStatus::Confirmed};
-    std::string teams_url;
     bool is_teams_meeting{false};
     std::string teams_join_url;
     MeetingTemporalStatus temporal_status{MeetingTemporalStatus::Future};
+    RecurrenceRule rrule;
 
-    // Returns whether this event occurs on the given date (based on local start/end times)
+    // Enrich event with Teams URL extraction and temporal status calculation
+    void enrich_teams_and_status(const CalendarDateTime& ref_time);
+
+    // Returns whether this event occurs on the given date (supporting recurring events)
     bool occurs_on(const CalendarDate& target_date) const;
+
+    // Generates an occurrence instance of this event on target_date
+    CalendarEvent generate_instance_for_date(const CalendarDate& target_date) const;
 };
 
 class IcsParser {
@@ -186,6 +228,9 @@ public:
 
     // Parse a date or datetime string according to RFC 5545 specifications
     CalendarDateTime ParseDateTime(std::string_view dt_str, std::string_view params = "") const;
+
+    // Static version of ParseDateTime for utility usage
+    static CalendarDateTime ParseDateTimeStatic(std::string_view dt_str, std::string_view params = "");
 
     // Parse full RFC 5545 iCalendar content into a list of normalized CalendarEvents
     std::vector<CalendarEvent> Parse(std::string_view ics_content) const;
@@ -523,16 +568,19 @@ struct AgendaItemViewModel {
     std::string status_badge_label;
     std::string status_badge_bg;
     std::string status_badge_fg;
-    std::string card_bg;
-    std::string card_border;
-    std::string primary_text_color;
-    std::string secondary_text_color;
-    std::string accent_color;
-    std::string accent_hover_color;
-    std::string accent_pressed_color;
+    ThemePalette palette;
     bool is_all_day{false};
     int64_t start_unix{0};
     int64_t end_unix{0};
+
+    // Accessors for backward compatibility and clean syntax
+    const std::string& card_bg() const { return palette.card_background; }
+    const std::string& card_border() const { return palette.card_border; }
+    const std::string& primary_text_color() const { return palette.primary_text; }
+    const std::string& secondary_text_color() const { return palette.secondary_text; }
+    const std::string& accent_color() const { return palette.teams_accent; }
+    const std::string& accent_hover_color() const { return palette.teams_accent_hover; }
+    const std::string& accent_pressed_color() const { return palette.teams_accent_pressed; }
 
     static AgendaItemViewModel FromCalendarEvent(
         const CalendarEvent& event,
@@ -813,20 +861,7 @@ MeetingTemporalStatus MeetingStatusCalculator::CalculateStatus(const CalendarEve
 }
 
 void MeetingStatusCalculator::EnrichEvent(CalendarEvent& event, const CalendarDateTime& reference_time) {
-    std::string teams_url = TeamsExtractor::ExtractFromEvent(event);
-
-    if (!teams_url.empty()) {
-        event.is_teams_meeting = true;
-        event.teams_join_url = teams_url;
-        event.teams_url = teams_url;
-    } else {
-        event.is_teams_meeting = false;
-        event.teams_join_url = "";
-        event.teams_url = "";
-    }
-
-    // 2. Temporal status calculation
-    event.temporal_status = CalculateStatus(event, reference_time);
+    event.enrich_teams_and_status(reference_time);
 }
 
 void MeetingStatusCalculator::EnrichEvents(std::vector<CalendarEvent>& events, const CalendarDateTime& reference_time) {
@@ -845,6 +880,7 @@ void MeetingStatusCalculator::EnrichEvents(std::vector<CalendarEvent>& events, c
 #include <cstdio>
 #include <sstream>
 #include <unordered_map>
+#include <ctime>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -903,6 +939,15 @@ std::string ToUpper(std::string_view sv) {
 // ============================================================================
 // CalendarDate
 // ============================================================================
+
+int CalendarDate::day_of_week() const {
+    int64_t days = DaysFromCivil(year, static_cast<unsigned>(month), static_cast<unsigned>(day));
+    int wd = static_cast<int>((days + 4) % 7);
+    if (wd < 0) {
+        wd += 7;
+    }
+    return wd;
+}
 
 std::string CalendarDate::to_string() const {
     char buf[32];
@@ -970,6 +1015,33 @@ CalendarDateTime CalendarDateTime::from_unix_timestamp(int64_t timestamp_seconds
     return dt;
 }
 
+CalendarDateTime CalendarDateTime::now_local(std::optional<int> tz_offset_minutes) {
+    if (tz_offset_minutes.has_value()) {
+        std::time_t t = std::time(nullptr);
+        int64_t local_ts = static_cast<int64_t>(t) + static_cast<int64_t>(*tz_offset_minutes) * 60;
+        return from_unix_timestamp(local_ts, false);
+    }
+
+#if defined(_WIN32)
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    CalendarDateTime dt;
+    dt.date = CalendarDate{st.wYear, st.wMonth, st.wDay};
+    dt.time = CalendarTime{st.wHour, st.wMinute, st.wSecond};
+    dt.is_utc = false;
+    return dt;
+#else
+    std::time_t t = std::time(nullptr);
+    std::tm tm_local{};
+    localtime_r(&t, &tm_local);
+    CalendarDateTime dt;
+    dt.date = CalendarDate{tm_local.tm_year + 1900, tm_local.tm_mon + 1, tm_local.tm_mday};
+    dt.time = CalendarTime{tm_local.tm_hour, tm_local.tm_min, tm_local.tm_sec};
+    dt.is_utc = false;
+    return dt;
+#endif
+}
+
 CalendarDateTime CalendarDateTime::to_local(int local_offset_minutes) const {
     if (is_utc) {
         int64_t utc_ts = to_unix_timestamp();
@@ -1000,10 +1072,200 @@ std::string CalendarDateTime::to_string() const {
 }
 
 // ============================================================================
+// RecurrenceRule
+// ============================================================================
+
+RecurrenceRule RecurrenceRule::Parse(std::string_view rrule_str, int local_tz_offset_minutes) {
+    RecurrenceRule rule;
+    std::string str(rrule_str);
+    std::istringstream token_stream(str);
+    std::string token;
+
+    while (std::getline(token_stream, token, ';')) {
+        size_t eq_pos = token.find('=');
+        if (eq_pos == std::string::npos) {
+            continue;
+        }
+
+        std::string key = ToUpper(Trim(token.substr(0, eq_pos)));
+        std::string val = Trim(token.substr(eq_pos + 1));
+        std::string upper_val = ToUpper(val);
+
+        if (key == "FREQ") {
+            if (upper_val == "DAILY") {
+                rule.freq = RecurrenceFrequency::Daily;
+            } else if (upper_val == "WEEKLY") {
+                rule.freq = RecurrenceFrequency::Weekly;
+            } else if (upper_val == "MONTHLY") {
+                rule.freq = RecurrenceFrequency::Monthly;
+            } else if (upper_val == "YEARLY") {
+                rule.freq = RecurrenceFrequency::Yearly;
+            }
+        } else if (key == "INTERVAL") {
+            try {
+                rule.interval = std::max(1, std::stoi(val));
+            } catch (...) {
+                rule.interval = 1;
+            }
+        } else if (key == "COUNT") {
+            try {
+                rule.count = std::max(0, std::stoi(val));
+            } catch (...) {
+                rule.count = std::nullopt;
+            }
+        } else if (key == "UNTIL") {
+            CalendarDateTime raw_until = IcsParser::ParseDateTimeStatic(val);
+            rule.until = raw_until.to_local(local_tz_offset_minutes);
+        } else if (key == "BYDAY") {
+            std::istringstream day_stream(upper_val);
+            std::string day_token;
+            while (std::getline(day_stream, day_token, ',')) {
+                day_token = Trim(day_token);
+                if (day_token == "SU") rule.by_day.push_back(Weekday::Sunday);
+                else if (day_token == "MO") rule.by_day.push_back(Weekday::Monday);
+                else if (day_token == "TU") rule.by_day.push_back(Weekday::Tuesday);
+                else if (day_token == "WE") rule.by_day.push_back(Weekday::Wednesday);
+                else if (day_token == "TH") rule.by_day.push_back(Weekday::Thursday);
+                else if (day_token == "FR") rule.by_day.push_back(Weekday::Friday);
+                else if (day_token == "SA") rule.by_day.push_back(Weekday::Saturday);
+            }
+        }
+    }
+
+    return rule;
+}
+
+bool RecurrenceRule::matches(const CalendarDateTime& dtstart, const CalendarDate& target_date) const {
+    if (!is_recurring()) {
+        return false;
+    }
+
+    const CalendarDate& start_date = dtstart.date;
+    if (target_date < start_date) {
+        return false;
+    }
+
+    if (until.has_value()) {
+        if (target_date > until->date) {
+            return false;
+        }
+        if (target_date == until->date) {
+            if (until->time.hour != 0 || until->time.minute != 0 || until->time.second != 0) {
+                if (dtstart.time > until->time) {
+                    return false;
+                }
+            }
+        }
+    }
+
+    int eff_interval = std::max(1, interval);
+
+    if (freq == RecurrenceFrequency::Daily) {
+        int64_t diff_days = DaysFromCivil(target_date.year, static_cast<unsigned>(target_date.month), static_cast<unsigned>(target_date.day)) -
+                            DaysFromCivil(start_date.year, static_cast<unsigned>(start_date.month), static_cast<unsigned>(start_date.day));
+        if (diff_days < 0 || (diff_days % eff_interval != 0)) {
+            return false;
+        }
+        if (count.has_value()) {
+            int64_t instance_idx = diff_days / eff_interval;
+            if (instance_idx >= *count) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    if (freq == RecurrenceFrequency::Weekly) {
+        int64_t days_start = DaysFromCivil(start_date.year, static_cast<unsigned>(start_date.month), static_cast<unsigned>(start_date.day));
+        int wd_start = static_cast<int>((days_start + 4) % 7);
+        if (wd_start < 0) wd_start += 7;
+        int mon_offset_start = (wd_start == 0) ? 6 : (wd_start - 1);
+        int64_t mon_start = days_start - mon_offset_start;
+
+        int64_t days_target = DaysFromCivil(target_date.year, static_cast<unsigned>(target_date.month), static_cast<unsigned>(target_date.day));
+        int wd_target = static_cast<int>((days_target + 4) % 7);
+        if (wd_target < 0) wd_target += 7;
+        int mon_offset_target = (wd_target == 0) ? 6 : (wd_target - 1);
+        int64_t mon_target = days_target - mon_offset_target;
+
+        int64_t diff_weeks = (mon_target - mon_start) / 7;
+        if (diff_weeks < 0) {
+            return false;
+        }
+        if (diff_weeks % eff_interval != 0) {
+            return false;
+        }
+
+        // Check if target weekday matches
+        bool wd_matches = false;
+        if (by_day.empty()) {
+            wd_matches = (wd_target == wd_start);
+        } else {
+            for (Weekday wd : by_day) {
+                if (static_cast<int>(wd) == wd_target) {
+                    wd_matches = true;
+                    break;
+                }
+            }
+        }
+
+        if (!wd_matches) {
+            return false;
+        }
+
+        if (count.has_value()) {
+            int occurrences = 0;
+            for (int64_t w = 0; w <= diff_weeks; w += eff_interval) {
+                int64_t curr_mon = mon_start + w * 7;
+                for (int day_idx = 0; day_idx < 7; ++day_idx) {
+                    int64_t curr_day = curr_mon + day_idx;
+                    if (curr_day < days_start) continue;
+                    if (curr_day > days_target) break;
+
+                    int curr_wd = static_cast<int>((curr_day + 4) % 7);
+                    if (curr_wd < 0) curr_wd += 7;
+
+                    bool day_matches = false;
+                    if (by_day.empty()) {
+                        day_matches = (curr_wd == wd_start);
+                    } else {
+                        for (Weekday wd : by_day) {
+                            if (static_cast<int>(wd) == curr_wd) {
+                                day_matches = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (day_matches) {
+                        occurrences++;
+                        if (curr_day == days_target) {
+                            return occurrences <= *count;
+                        }
+                        if (occurrences >= *count) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+        return true;
+    }
+
+    return false;
+}
+
+// ============================================================================
 // CalendarEvent
 // ============================================================================
 
 bool CalendarEvent::occurs_on(const CalendarDate& target_date) const {
+    if (rrule.is_recurring()) {
+        return rrule.matches(start_time, target_date);
+    }
+
     if (is_all_day) {
         if (end_time.date.year == 0 || end_time.date <= start_time.date) {
             return target_date == start_time.date;
@@ -1028,6 +1290,47 @@ bool CalendarEvent::occurs_on(const CalendarDate& target_date) const {
     }
 
     return false;
+}
+
+CalendarEvent CalendarEvent::generate_instance_for_date(const CalendarDate& target_date) const {
+    CalendarEvent instance = *this;
+    instance.start_time.date = target_date;
+
+    if (is_all_day) {
+        int64_t start_days = DaysFromCivil(start_time.date.year, static_cast<unsigned>(start_time.date.month), static_cast<unsigned>(start_time.date.day));
+        int64_t end_days = DaysFromCivil(end_time.date.year, static_cast<unsigned>(end_time.date.month), static_cast<unsigned>(end_time.date.day));
+        int64_t duration_days = end_days - start_days;
+        if (duration_days <= 0) {
+            duration_days = 1;
+        }
+        int64_t new_end_days = DaysFromCivil(target_date.year, static_cast<unsigned>(target_date.month), static_cast<unsigned>(target_date.day)) + duration_days;
+        CivilFromDays(new_end_days, instance.end_time.date.year, instance.end_time.date.month, instance.end_time.date.day);
+        instance.end_time.time = {0, 0, 0};
+    } else {
+        int64_t start_ts = start_time.to_unix_timestamp();
+        int64_t end_ts = end_time.to_unix_timestamp();
+        int64_t duration_secs = end_ts - start_ts;
+        if (duration_secs <= 0) {
+            duration_secs = 3600; // default 1 hour
+        }
+        int64_t new_start_ts = instance.start_time.to_unix_timestamp();
+        instance.end_time = CalendarDateTime::from_unix_timestamp(new_start_ts + duration_secs, instance.start_time.is_utc);
+        instance.end_time.tzid = instance.start_time.tzid;
+    }
+
+    return instance;
+}
+
+void CalendarEvent::enrich_teams_and_status(const CalendarDateTime& ref_time) {
+    std::string detected = TeamsExtractor::ExtractFromEvent(*this);
+    if (!detected.empty()) {
+        is_teams_meeting = true;
+        teams_join_url = detected;
+    } else {
+        is_teams_meeting = false;
+        teams_join_url.clear();
+    }
+    temporal_status = MeetingStatusCalculator::CalculateStatus(*this, ref_time);
 }
 
 // ============================================================================
@@ -1179,6 +1482,11 @@ CalendarDateTime IcsParser::ParseDateTime(std::string_view dt_str, std::string_v
     return dt;
 }
 
+CalendarDateTime IcsParser::ParseDateTimeStatic(std::string_view dt_str, std::string_view params) {
+    IcsParser p(0);
+    return p.ParseDateTime(dt_str, params);
+}
+
 int IcsParser::ResolveTzidOffsetMinutes(std::string_view tzid) {
     std::string id = ToUpper(Trim(tzid));
 
@@ -1322,11 +1630,9 @@ std::vector<CalendarEvent> IcsParser::Parse(std::string_view ics_content) const 
             if (!detected_teams.empty()) {
                 current_event.is_teams_meeting = true;
                 current_event.teams_join_url = detected_teams;
-                current_event.teams_url = detected_teams;
             } else {
                 current_event.is_teams_meeting = false;
-                current_event.teams_join_url = "";
-                current_event.teams_url = "";
+                current_event.teams_join_url.clear();
             }
 
             events.push_back(current_event);
@@ -1403,9 +1709,10 @@ std::vector<CalendarEvent> IcsParser::Parse(std::string_view ics_content) const 
             }
         } else if (prop_name == "DTEND") {
             current_event.end_time = ParseDateTime(prop_value, prop_params);
+        } else if (prop_name == "RRULE") {
+            current_event.rrule = RecurrenceRule::Parse(prop_value, local_tz_offset_minutes_);
         } else if (prop_name == "URL" || prop_name == "X-MICROSOFT-SKYPETEAMSMEETINGURL") {
             current_event.teams_join_url = Trim(prop_value);
-            current_event.teams_url = current_event.teams_join_url;
         }
     }
 
@@ -1419,7 +1726,7 @@ std::vector<CalendarEvent> IcsParser::GetEventsForDate(
     std::vector<CalendarEvent> matched;
     for (const auto& ev : events) {
         if (ev.occurs_on(date)) {
-            matched.push_back(ev);
+            matched.push_back(ev.rrule.is_recurring() ? ev.generate_instance_for_date(date) : ev);
         }
     }
 
@@ -1649,9 +1956,6 @@ std::optional<std::string> TeamsExtractor::DecodeSafeLink(std::string_view safel
 std::string TeamsExtractor::ExtractFromEvent(const CalendarEvent& event) {
     if (!event.teams_join_url.empty() && IsTeamsUrl(event.teams_join_url)) {
         return event.teams_join_url;
-    }
-    if (!event.teams_url.empty() && IsTeamsUrl(event.teams_url)) {
-        return event.teams_url;
     }
     if (!event.location.empty()) {
         std::string from_loc = ExtractTeamsUrl(event.location);
@@ -1953,10 +2257,11 @@ std::vector<CalendarEvent> CalendarCache::GetEventsForDate(const CalendarDate& t
         if (!ev.occurs_on(target_date)) {
             continue;
         }
-        if (!show_past_events && ev.temporal_status == MeetingTemporalStatus::Past) {
+        CalendarEvent instance = ev.rrule.is_recurring() ? ev.generate_instance_for_date(target_date) : ev;
+        if (!show_past_events && instance.temporal_status == MeetingTemporalStatus::Past) {
             continue;
         }
-        result.push_back(ev);
+        result.push_back(std::move(instance));
     }
 
     return result;
@@ -2360,7 +2665,7 @@ AgendaItemViewModel AgendaItemViewModel::FromCalendarEvent(
     vm.title = event.summary;
     vm.location = event.location;
     vm.is_teams = event.is_teams_meeting;
-    vm.join_url = event.teams_join_url.empty() ? event.teams_url : event.teams_join_url;
+    vm.join_url = event.teams_join_url;
     vm.enable_join_button = enable_join;
     vm.is_all_day = event.is_all_day;
     vm.start_unix = event.start_time.to_unix_timestamp();
@@ -2369,38 +2674,31 @@ AgendaItemViewModel AgendaItemViewModel::FromCalendarEvent(
     // Recompute or verify temporal status relative to reference_time
     vm.temporal_status = MeetingStatusCalculator::CalculateStatus(event, reference_time);
 
-    ThemePalette palette = ThemePalette::ForTheme(theme);
-    vm.card_bg = palette.card_background;
-    vm.card_border = palette.card_border;
-    vm.primary_text_color = palette.primary_text;
-    vm.secondary_text_color = palette.secondary_text;
-    vm.accent_color = palette.teams_accent;
-    vm.accent_hover_color = palette.teams_accent_hover;
-    vm.accent_pressed_color = palette.teams_accent_pressed;
+    vm.palette = ThemePalette::ForTheme(theme);
 
     vm.formatted_time_range = AgendaPresenter::FormatTimeRange(event.start_time, event.end_time, event.is_all_day);
 
     switch (vm.temporal_status) {
     case MeetingTemporalStatus::Live:
         vm.status_badge_label = "Live Now";
-        vm.status_badge_bg = palette.live_badge_bg;
-        vm.status_badge_fg = palette.live_badge_fg;
+        vm.status_badge_bg = vm.palette.live_badge_bg;
+        vm.status_badge_fg = vm.palette.live_badge_fg;
         break;
     case MeetingTemporalStatus::Soon:
         vm.status_badge_label = "Starting Soon";
-        vm.status_badge_bg = palette.soon_badge_bg;
-        vm.status_badge_fg = palette.soon_badge_fg;
+        vm.status_badge_bg = vm.palette.soon_badge_bg;
+        vm.status_badge_fg = vm.palette.soon_badge_fg;
         break;
     case MeetingTemporalStatus::Past:
         vm.status_badge_label = "Past";
-        vm.status_badge_bg = palette.past_badge_bg;
-        vm.status_badge_fg = palette.past_badge_fg;
+        vm.status_badge_bg = vm.palette.past_badge_bg;
+        vm.status_badge_fg = vm.palette.past_badge_fg;
         break;
     case MeetingTemporalStatus::Future:
     default:
         vm.status_badge_label = "Upcoming";
-        vm.status_badge_bg = palette.upcoming_badge_bg;
-        vm.status_badge_fg = palette.upcoming_badge_fg;
+        vm.status_badge_bg = vm.palette.upcoming_badge_bg;
+        vm.status_badge_fg = vm.palette.upcoming_badge_fg;
         break;
     }
 
@@ -2436,8 +2734,10 @@ AgendaDayViewModel AgendaPresenter::PresentEvents(
             continue;
         }
 
+        CalendarEvent instance = ev.rrule.is_recurring() ? ev.generate_instance_for_date(date) : ev;
+
         AgendaItemViewModel vm = AgendaItemViewModel::FromCalendarEvent(
-            ev, theme, reference_time, enable_join_button
+            instance, theme, reference_time, enable_join_button
         );
 
         if (!show_past_events && vm.temporal_status == MeetingTemporalStatus::Past) {
@@ -2613,8 +2913,8 @@ std::string XamlMarkupGenerator::GenerateAgendaXaml(const AgendaDayViewModel& vi
     } else {
         for (size_t i = 0; i < viewModel.items.size(); ++i) {
             const auto& item = viewModel.items[i];
-            ss << "    <Border x:Name=\"MeetingCard_" << i << "\" Background=\"" << item.card_bg
-               << "\" BorderBrush=\"" << item.card_border
+            ss << "    <Border x:Name=\"MeetingCard_" << i << "\" Background=\"" << item.card_bg()
+               << "\" BorderBrush=\"" << item.card_border()
                << "\" BorderThickness=\"1\" CornerRadius=\"6\" Padding=\"10,8,10,8\" Margin=\"0,2,0,2\">\n";
             ss << "      <StackPanel Spacing=\"4\">\n";
 
@@ -2623,7 +2923,7 @@ std::string XamlMarkupGenerator::GenerateAgendaXaml(const AgendaDayViewModel& vi
             ss << "          <TextBlock Grid.Column=\"0\" Text=\""
                << EscapeXml(item.formatted_time_range)
                << "\" FontSize=\"12\" FontWeight=\"SemiBold\" Foreground=\""
-               << item.secondary_text_color << "\"/>\n";
+               << item.secondary_text_color() << "\"/>\n";
             ss << "          <StackPanel Grid.Column=\"2\" Orientation=\"Horizontal\" Spacing=\"6\" HorizontalAlignment=\"Right\">\n";
             ss << "            <Border Background=\"" << item.status_badge_bg
                << "\" CornerRadius=\"3\" Padding=\"5,1,5,1\">\n";
@@ -2633,7 +2933,7 @@ std::string XamlMarkupGenerator::GenerateAgendaXaml(const AgendaDayViewModel& vi
             ss << "            </Border>\n";
 
             if (item.is_teams) {
-                ss << "            <Border Background=\"" << item.accent_color
+                ss << "            <Border Background=\"" << item.accent_color()
                    << "\" CornerRadius=\"3\" Padding=\"4,1,4,1\">\n";
                 ss << "              <TextBlock Text=\"Teams\" FontSize=\"10\" FontWeight=\"Bold\" Foreground=\"#FFFFFF\"/>\n";
                 ss << "            </Border>\n";
@@ -2644,20 +2944,20 @@ std::string XamlMarkupGenerator::GenerateAgendaXaml(const AgendaDayViewModel& vi
             // Title
             ss << "        <TextBlock Text=\"" << EscapeXml(item.title)
                << "\" FontSize=\"13\" FontWeight=\"Bold\" TextWrapping=\"Wrap\" Foreground=\""
-               << item.primary_text_color << "\"/>\n";
+               << item.primary_text_color() << "\"/>\n";
 
             // Location if non-empty
             if (!item.location.empty()) {
                 ss << "        <TextBlock Text=\"" << EscapeXml(item.location)
                    << "\" FontSize=\"11\" Foreground=\""
-                   << item.secondary_text_color << "\" TextTrimming=\"CharacterEllipsis\"/>\n";
+                   << item.secondary_text_color() << "\" TextTrimming=\"CharacterEllipsis\"/>\n";
             }
 
             // Teams Join Button (Fluent Design styled with rounded corners, icon, and hover-ready styling)
             if (item.is_teams && item.enable_join_button && !item.join_url.empty()) {
                 ss << "        <Button x:Name=\"JoinButton_" << i << "\" Tag=\""
                    << EscapeXml(item.join_url)
-                   << "\" Background=\"" << item.accent_color
+                   << "\" Background=\"" << item.accent_color()
                    << "\" Foreground=\"#FFFFFF\" BorderThickness=\"1\" BorderBrush=\"#00000000\" "
                    << "CornerRadius=\"4\" Padding=\"10,4,10,4\" HorizontalAlignment=\"Left\" Margin=\"0,4,0,0\">\n";
                 ss << "          <StackPanel Orientation=\"Horizontal\" Spacing=\"6\" VerticalAlignment=\"Center\">\n";
@@ -2845,13 +3145,7 @@ AgendaDayViewModel XamlInjector::GetCurrentViewModel() const {
 }
 
 void XamlInjector::RenderAndInjectLocked(std::optional<CalendarDateTime> reference_time) {
-    CalendarDateTime ref_time;
-    if (reference_time.has_value()) {
-        ref_time = *reference_time;
-    } else {
-        std::time_t t = std::time(nullptr);
-        ref_time = CalendarDateTime::from_unix_timestamp(static_cast<int64_t>(t));
-    }
+    CalendarDateTime ref_time = reference_time.has_value() ? *reference_time : CalendarDateTime::now_local();
 
     if (cache_) {
         current_view_model_ = AgendaPresenter::PresentDay(
@@ -2892,6 +3186,10 @@ void XamlInjector::RenderAndInjectLocked(std::optional<CalendarDateTime> referen
 
 #include <windows.h>
 #ifdef WH_MOD
+#else
+#ifndef Wh_Log
+#define Wh_Log(...) ((void)0)
+#endif
 #endif
 
 namespace calendar {
@@ -3056,16 +3354,50 @@ void ModLifecycleManager::ResetForTesting() {
 
 } // namespace calendar
 
+#ifdef WH_MOD
+// Symbol hook declarations for ShellHost.exe calendar view
+typedef void (WINAPI *CalendarView_OnSelectedDatesChanged_t)(void* pThis, void* pArgs);
+static CalendarView_OnSelectedDatesChanged_t pOriginalCalendarView_OnSelectedDatesChanged = nullptr;
+
+static void WINAPI Hook_CalendarView_OnSelectedDatesChanged(void* pThis, void* pArgs) {
+    if (pOriginalCalendarView_OnSelectedDatesChanged) {
+        pOriginalCalendarView_OnSelectedDatesChanged(pThis, pArgs);
+    }
+    Wh_Log(L"CalendarView selected date changed in ShellHost");
+    auto injector = calendar::ModLifecycleManager::Instance().GetInjector();
+    if (injector) {
+        injector->OnDateSelected(injector->GetSelectedDate());
+    }
+}
+#endif
+
 // Windhawk mod entry points
 extern "C" __declspec(dllexport) BOOL Wh_ModInit() {
+    Wh_Log(L"Teams Calendar Flyout initializing");
+#ifdef WH_MOD
+    const WindhawkUtils::SYMBOL_HOOK hooks[] = {
+        {
+            {
+                L"private: void __cdecl winrt::Windows::UI::Xaml::Controls::CalendarView::OnSelectedDatesChanged(struct winrt::Windows::UI::Xaml::Controls::CalendarViewSelectedDatesChangedEventArgs const &)",
+                L"?OnSelectedDatesChanged@CalendarView@Controls@Xaml@UI@winrt@@AEAAXAEBUCalendarViewSelectedDatesChangedEventArgs@2345@@Z"
+            },
+            &pOriginalCalendarView_OnSelectedDatesChanged,
+            Hook_CalendarView_OnSelectedDatesChanged,
+            true // optional
+        }
+    };
+    WindhawkUtils::HookSymbols(GetModuleHandleW(nullptr), hooks, ARRAYSIZE(hooks));
+#endif
     return calendar::ModLifecycleManager::Instance().Initialize() ? TRUE : FALSE;
 }
 
 extern "C" __declspec(dllexport) void Wh_ModSettingsChanged() {
+    Wh_Log(L"Teams Calendar Flyout settings changed");
     calendar::ModLifecycleManager::Instance().OnSettingsChanged();
 }
 
 extern "C" __declspec(dllexport) void Wh_ModUninit() {
+    Wh_Log(L"Teams Calendar Flyout uninitializing");
     calendar::ModLifecycleManager::Instance().Uninitialize();
 }
 

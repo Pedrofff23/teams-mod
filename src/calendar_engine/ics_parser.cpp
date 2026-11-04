@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <sstream>
 #include <unordered_map>
+#include <ctime>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -64,6 +65,15 @@ std::string ToUpper(std::string_view sv) {
 // ============================================================================
 // CalendarDate
 // ============================================================================
+
+int CalendarDate::day_of_week() const {
+    int64_t days = DaysFromCivil(year, static_cast<unsigned>(month), static_cast<unsigned>(day));
+    int wd = static_cast<int>((days + 4) % 7);
+    if (wd < 0) {
+        wd += 7;
+    }
+    return wd;
+}
 
 std::string CalendarDate::to_string() const {
     char buf[32];
@@ -131,6 +141,33 @@ CalendarDateTime CalendarDateTime::from_unix_timestamp(int64_t timestamp_seconds
     return dt;
 }
 
+CalendarDateTime CalendarDateTime::now_local(std::optional<int> tz_offset_minutes) {
+    if (tz_offset_minutes.has_value()) {
+        std::time_t t = std::time(nullptr);
+        int64_t local_ts = static_cast<int64_t>(t) + static_cast<int64_t>(*tz_offset_minutes) * 60;
+        return from_unix_timestamp(local_ts, false);
+    }
+
+#if defined(_WIN32)
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    CalendarDateTime dt;
+    dt.date = CalendarDate{st.wYear, st.wMonth, st.wDay};
+    dt.time = CalendarTime{st.wHour, st.wMinute, st.wSecond};
+    dt.is_utc = false;
+    return dt;
+#else
+    std::time_t t = std::time(nullptr);
+    std::tm tm_local{};
+    localtime_r(&t, &tm_local);
+    CalendarDateTime dt;
+    dt.date = CalendarDate{tm_local.tm_year + 1900, tm_local.tm_mon + 1, tm_local.tm_mday};
+    dt.time = CalendarTime{tm_local.tm_hour, tm_local.tm_min, tm_local.tm_sec};
+    dt.is_utc = false;
+    return dt;
+#endif
+}
+
 CalendarDateTime CalendarDateTime::to_local(int local_offset_minutes) const {
     if (is_utc) {
         int64_t utc_ts = to_unix_timestamp();
@@ -161,10 +198,200 @@ std::string CalendarDateTime::to_string() const {
 }
 
 // ============================================================================
+// RecurrenceRule
+// ============================================================================
+
+RecurrenceRule RecurrenceRule::Parse(std::string_view rrule_str, int local_tz_offset_minutes) {
+    RecurrenceRule rule;
+    std::string str(rrule_str);
+    std::istringstream token_stream(str);
+    std::string token;
+
+    while (std::getline(token_stream, token, ';')) {
+        size_t eq_pos = token.find('=');
+        if (eq_pos == std::string::npos) {
+            continue;
+        }
+
+        std::string key = ToUpper(Trim(token.substr(0, eq_pos)));
+        std::string val = Trim(token.substr(eq_pos + 1));
+        std::string upper_val = ToUpper(val);
+
+        if (key == "FREQ") {
+            if (upper_val == "DAILY") {
+                rule.freq = RecurrenceFrequency::Daily;
+            } else if (upper_val == "WEEKLY") {
+                rule.freq = RecurrenceFrequency::Weekly;
+            } else if (upper_val == "MONTHLY") {
+                rule.freq = RecurrenceFrequency::Monthly;
+            } else if (upper_val == "YEARLY") {
+                rule.freq = RecurrenceFrequency::Yearly;
+            }
+        } else if (key == "INTERVAL") {
+            try {
+                rule.interval = std::max(1, std::stoi(val));
+            } catch (...) {
+                rule.interval = 1;
+            }
+        } else if (key == "COUNT") {
+            try {
+                rule.count = std::max(0, std::stoi(val));
+            } catch (...) {
+                rule.count = std::nullopt;
+            }
+        } else if (key == "UNTIL") {
+            CalendarDateTime raw_until = IcsParser::ParseDateTimeStatic(val);
+            rule.until = raw_until.to_local(local_tz_offset_minutes);
+        } else if (key == "BYDAY") {
+            std::istringstream day_stream(upper_val);
+            std::string day_token;
+            while (std::getline(day_stream, day_token, ',')) {
+                day_token = Trim(day_token);
+                if (day_token == "SU") rule.by_day.push_back(Weekday::Sunday);
+                else if (day_token == "MO") rule.by_day.push_back(Weekday::Monday);
+                else if (day_token == "TU") rule.by_day.push_back(Weekday::Tuesday);
+                else if (day_token == "WE") rule.by_day.push_back(Weekday::Wednesday);
+                else if (day_token == "TH") rule.by_day.push_back(Weekday::Thursday);
+                else if (day_token == "FR") rule.by_day.push_back(Weekday::Friday);
+                else if (day_token == "SA") rule.by_day.push_back(Weekday::Saturday);
+            }
+        }
+    }
+
+    return rule;
+}
+
+bool RecurrenceRule::matches(const CalendarDateTime& dtstart, const CalendarDate& target_date) const {
+    if (!is_recurring()) {
+        return false;
+    }
+
+    const CalendarDate& start_date = dtstart.date;
+    if (target_date < start_date) {
+        return false;
+    }
+
+    if (until.has_value()) {
+        if (target_date > until->date) {
+            return false;
+        }
+        if (target_date == until->date) {
+            if (until->time.hour != 0 || until->time.minute != 0 || until->time.second != 0) {
+                if (dtstart.time > until->time) {
+                    return false;
+                }
+            }
+        }
+    }
+
+    int eff_interval = std::max(1, interval);
+
+    if (freq == RecurrenceFrequency::Daily) {
+        int64_t diff_days = DaysFromCivil(target_date.year, static_cast<unsigned>(target_date.month), static_cast<unsigned>(target_date.day)) -
+                            DaysFromCivil(start_date.year, static_cast<unsigned>(start_date.month), static_cast<unsigned>(start_date.day));
+        if (diff_days < 0 || (diff_days % eff_interval != 0)) {
+            return false;
+        }
+        if (count.has_value()) {
+            int64_t instance_idx = diff_days / eff_interval;
+            if (instance_idx >= *count) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    if (freq == RecurrenceFrequency::Weekly) {
+        int64_t days_start = DaysFromCivil(start_date.year, static_cast<unsigned>(start_date.month), static_cast<unsigned>(start_date.day));
+        int wd_start = static_cast<int>((days_start + 4) % 7);
+        if (wd_start < 0) wd_start += 7;
+        int mon_offset_start = (wd_start == 0) ? 6 : (wd_start - 1);
+        int64_t mon_start = days_start - mon_offset_start;
+
+        int64_t days_target = DaysFromCivil(target_date.year, static_cast<unsigned>(target_date.month), static_cast<unsigned>(target_date.day));
+        int wd_target = static_cast<int>((days_target + 4) % 7);
+        if (wd_target < 0) wd_target += 7;
+        int mon_offset_target = (wd_target == 0) ? 6 : (wd_target - 1);
+        int64_t mon_target = days_target - mon_offset_target;
+
+        int64_t diff_weeks = (mon_target - mon_start) / 7;
+        if (diff_weeks < 0) {
+            return false;
+        }
+        if (diff_weeks % eff_interval != 0) {
+            return false;
+        }
+
+        // Check if target weekday matches
+        bool wd_matches = false;
+        if (by_day.empty()) {
+            wd_matches = (wd_target == wd_start);
+        } else {
+            for (Weekday wd : by_day) {
+                if (static_cast<int>(wd) == wd_target) {
+                    wd_matches = true;
+                    break;
+                }
+            }
+        }
+
+        if (!wd_matches) {
+            return false;
+        }
+
+        if (count.has_value()) {
+            int occurrences = 0;
+            for (int64_t w = 0; w <= diff_weeks; w += eff_interval) {
+                int64_t curr_mon = mon_start + w * 7;
+                for (int day_idx = 0; day_idx < 7; ++day_idx) {
+                    int64_t curr_day = curr_mon + day_idx;
+                    if (curr_day < days_start) continue;
+                    if (curr_day > days_target) break;
+
+                    int curr_wd = static_cast<int>((curr_day + 4) % 7);
+                    if (curr_wd < 0) curr_wd += 7;
+
+                    bool day_matches = false;
+                    if (by_day.empty()) {
+                        day_matches = (curr_wd == wd_start);
+                    } else {
+                        for (Weekday wd : by_day) {
+                            if (static_cast<int>(wd) == curr_wd) {
+                                day_matches = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (day_matches) {
+                        occurrences++;
+                        if (curr_day == days_target) {
+                            return occurrences <= *count;
+                        }
+                        if (occurrences >= *count) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+
+        return true;
+    }
+
+    return false;
+}
+
+// ============================================================================
 // CalendarEvent
 // ============================================================================
 
 bool CalendarEvent::occurs_on(const CalendarDate& target_date) const {
+    if (rrule.is_recurring()) {
+        return rrule.matches(start_time, target_date);
+    }
+
     if (is_all_day) {
         if (end_time.date.year == 0 || end_time.date <= start_time.date) {
             return target_date == start_time.date;
@@ -189,6 +416,47 @@ bool CalendarEvent::occurs_on(const CalendarDate& target_date) const {
     }
 
     return false;
+}
+
+CalendarEvent CalendarEvent::generate_instance_for_date(const CalendarDate& target_date) const {
+    CalendarEvent instance = *this;
+    instance.start_time.date = target_date;
+
+    if (is_all_day) {
+        int64_t start_days = DaysFromCivil(start_time.date.year, static_cast<unsigned>(start_time.date.month), static_cast<unsigned>(start_time.date.day));
+        int64_t end_days = DaysFromCivil(end_time.date.year, static_cast<unsigned>(end_time.date.month), static_cast<unsigned>(end_time.date.day));
+        int64_t duration_days = end_days - start_days;
+        if (duration_days <= 0) {
+            duration_days = 1;
+        }
+        int64_t new_end_days = DaysFromCivil(target_date.year, static_cast<unsigned>(target_date.month), static_cast<unsigned>(target_date.day)) + duration_days;
+        CivilFromDays(new_end_days, instance.end_time.date.year, instance.end_time.date.month, instance.end_time.date.day);
+        instance.end_time.time = {0, 0, 0};
+    } else {
+        int64_t start_ts = start_time.to_unix_timestamp();
+        int64_t end_ts = end_time.to_unix_timestamp();
+        int64_t duration_secs = end_ts - start_ts;
+        if (duration_secs <= 0) {
+            duration_secs = 3600; // default 1 hour
+        }
+        int64_t new_start_ts = instance.start_time.to_unix_timestamp();
+        instance.end_time = CalendarDateTime::from_unix_timestamp(new_start_ts + duration_secs, instance.start_time.is_utc);
+        instance.end_time.tzid = instance.start_time.tzid;
+    }
+
+    return instance;
+}
+
+void CalendarEvent::enrich_teams_and_status(const CalendarDateTime& ref_time) {
+    std::string detected = TeamsExtractor::ExtractFromEvent(*this);
+    if (!detected.empty()) {
+        is_teams_meeting = true;
+        teams_join_url = detected;
+    } else {
+        is_teams_meeting = false;
+        teams_join_url.clear();
+    }
+    temporal_status = MeetingStatusCalculator::CalculateStatus(*this, ref_time);
 }
 
 // ============================================================================
@@ -340,6 +608,11 @@ CalendarDateTime IcsParser::ParseDateTime(std::string_view dt_str, std::string_v
     return dt;
 }
 
+CalendarDateTime IcsParser::ParseDateTimeStatic(std::string_view dt_str, std::string_view params) {
+    IcsParser p(0);
+    return p.ParseDateTime(dt_str, params);
+}
+
 int IcsParser::ResolveTzidOffsetMinutes(std::string_view tzid) {
     std::string id = ToUpper(Trim(tzid));
 
@@ -483,11 +756,9 @@ std::vector<CalendarEvent> IcsParser::Parse(std::string_view ics_content) const 
             if (!detected_teams.empty()) {
                 current_event.is_teams_meeting = true;
                 current_event.teams_join_url = detected_teams;
-                current_event.teams_url = detected_teams;
             } else {
                 current_event.is_teams_meeting = false;
-                current_event.teams_join_url = "";
-                current_event.teams_url = "";
+                current_event.teams_join_url.clear();
             }
 
             events.push_back(current_event);
@@ -564,9 +835,10 @@ std::vector<CalendarEvent> IcsParser::Parse(std::string_view ics_content) const 
             }
         } else if (prop_name == "DTEND") {
             current_event.end_time = ParseDateTime(prop_value, prop_params);
+        } else if (prop_name == "RRULE") {
+            current_event.rrule = RecurrenceRule::Parse(prop_value, local_tz_offset_minutes_);
         } else if (prop_name == "URL" || prop_name == "X-MICROSOFT-SKYPETEAMSMEETINGURL") {
             current_event.teams_join_url = Trim(prop_value);
-            current_event.teams_url = current_event.teams_join_url;
         }
     }
 
@@ -580,7 +852,7 @@ std::vector<CalendarEvent> IcsParser::GetEventsForDate(
     std::vector<CalendarEvent> matched;
     for (const auto& ev : events) {
         if (ev.occurs_on(date)) {
-            matched.push_back(ev);
+            matched.push_back(ev.rrule.is_recurring() ? ev.generate_instance_for_date(date) : ev);
         }
     }
 
