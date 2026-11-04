@@ -4,11 +4,10 @@
 
 **Blocked by:** 02: Microsoft Teams Meeting URL Extractor and Status Calculator
 
-**Status:** ready-for-agent
+**Status:** ready-for-human
 
-- [ ] Complete Windhawk mod metadata block with `@id`, `@name`, `@description`, and target process `@include` definitions
-- [ ] Windhawk settings block exposing feed URL, polling refresh interval in minutes, and visual preference flags
-- [ ] Lifecycle hooks implementation (`Wh_ModInit`, `Wh_ModSettingsChanged`, `Wh_ModUninit`) with clean resource management
-- [ ] Asynchronous background HTTPS fetcher retrieving remote ICS data via Windows networking without blocking or freezing shell threads
-- [ ] Safe in-memory caching of the latest successful calendar snapshot for offline resilience
-
+- [x] Complete Windhawk mod metadata block with `@id`, `@name`, `@description`, and target process `@include` definitions
+- [x] Windhawk settings block exposing feed URL, polling refresh interval in minutes, and visual preference flags
+- [x] Lifecycle hooks implementation (`Wh_ModInit`, `Wh_ModSettingsChanged`, `Wh_ModUninit`) with clean resource management
+- [x] Asynchronous background HTTPS fetcher retrieving remote ICS data via Windows networking without blocking or freezing shell threads
+- [x] Safe in-memory caching of the latest successful calendar snapshot for offline resilience

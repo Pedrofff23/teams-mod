@@ -42,12 +42,30 @@ if (Test-Path "src/calendar_engine/meeting_status.cpp") {
     $engineSources += "src/calendar_engine/meeting_status.cpp"
 }
 
+$modSources = @()
+if (Test-Path "src/mod/mod_settings.cpp") {
+    $modSources += "src/mod/mod_settings.cpp"
+}
+if (Test-Path "src/mod/calendar_cache.cpp") {
+    $modSources += "src/mod/calendar_cache.cpp"
+}
+if (Test-Path "src/mod/http_fetcher.cpp") {
+    $modSources += "src/mod/http_fetcher.cpp"
+}
+if (Test-Path "src/mod/teams_calendar_flyout.wh.cpp") {
+    $modSources += "src/mod/teams_calendar_flyout.wh.cpp"
+}
+
 if ($Suite -eq "all" -or $Suite -eq "ics") {
     Run-TestDll "build_test_ics.dll" "tests/test_ics_parser.cpp" $engineSources
 }
 
 if ($Suite -eq "all" -or $Suite -eq "teams") {
     Run-TestDll "build_test_teams.dll" "tests/test_teams_extractor.cpp" $engineSources
+}
+
+if ($Suite -eq "all" -or $Suite -eq "mod") {
+    Run-TestDll "build_test_mod.dll" "tests/test_mod_skeleton_http.cpp" ($engineSources + $modSources + @("-lwininet", "-lole32", "-lshell32"))
 }
 
 Write-Host "All requested test suites passed!"
