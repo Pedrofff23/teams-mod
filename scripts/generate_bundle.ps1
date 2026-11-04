@@ -13,24 +13,57 @@ $bundleHeader = @'
 // @description     Displays upcoming Microsoft Teams meetings in the Windows 11 calendar flyout
 // @version         1.0.0
 // @author          Pedrofff23
+// @github          https://github.com/Pedrofff23/teams-mod
 // @include         ShellHost.exe
 // @include         ShellExperienceHost.exe
 // @compilerOptions -lwininet -lole32 -lshell32
 // ==/WindhawkMod==
 
+// ==WindhawkModReadme==
+/*
+# Microsoft Teams Calendar Flyout
+
+Integrates Microsoft Teams upcoming meetings directly into the native Windows 11 taskbar calendar flyout (Notification Center / Clock flyout).
+
+## Features
+- **Daily Agenda**: Displays today's schedule directly inside the calendar flyout when clicking the taskbar clock.
+- **Dynamic Meeting Status**: Color-coded badges indicating meeting status:
+  - **Live** (Green): Meeting is currently in progress.
+  - **Soon** (Amber): Meeting starts within 15 minutes.
+  - **Future**: Upcoming meeting later today.
+  - **Past**: Completed meeting earlier today.
+- **One-Click Join**: Quick "Join Meeting" button launching directly into Microsoft Teams.
+- **Background Sync**: Periodically fetches and parses your Outlook / Teams calendar feed via WinINet.
+- **Native Fluent UI**: Blends seamlessly with Windows 11 Dark and Light themes.
+- **Privacy-first**: Connects directly to your calendar feed URL without intermediate proxy servers.
+
+## How to Configure
+1. Open the **Settings** tab of this mod in Windhawk.
+2. In **Outlook / Teams ICS Feed URL**, paste your published calendar ICS link:
+   - Go to [Outlook on the web](https://outlook.office.com/mail/) -> **Settings** (gear icon) -> **Calendar** -> **Shared calendars**.
+   - Under **Publish a calendar**, select your calendar and set permissions to *Can view all details*, then click **Publish**.
+   - Copy the **ICS** link and paste it into the mod settings.
+3. Configure your desired **Refresh Interval** (default: 15 minutes).
+4. Choose whether to show past meetings or enable the join button.
+5. Click **Save** in Windhawk. Open your Windows 11 clock flyout to view your agenda!
+*/
+// ==/WindhawkModReadme==
+
 // ==WindhawkModSettings==
-// - feed_url: ""
-//   $name: Outlook / Teams ICS Feed URL
-//   $description: Published ICS calendar URL from Outlook Web or Microsoft Teams
-// - refresh_interval_minutes: 15
-//   $name: Refresh Interval (minutes)
-//   $description: How often to check for calendar updates (minimum 1)
-// - show_past_events: false
-//   $name: Show Past Events
-//   $description: Show meetings that have already ended earlier today
-// - enable_join_button: true
-//   $name: Enable One-Click Join Button
-//   $description: Display direct Join Meeting button for Microsoft Teams links
+/*
+- feed_url: ""
+  $name: Outlook / Teams ICS Feed URL
+  $description: Published ICS calendar URL from Outlook Web or Microsoft Teams
+- refresh_interval_minutes: 15
+  $name: Refresh Interval (minutes)
+  $description: How often to check for calendar updates (minimum 1)
+- show_past_events: false
+  $name: Show Past Events
+  $description: Show meetings that have already ended earlier today
+- enable_join_button: true
+  $name: Enable One-Click Join Button
+  $description: Display direct Join Meeting button for Microsoft Teams links
+*/
 // ==/WindhawkModSettings==
 
 #ifndef UNICODE
@@ -73,7 +106,6 @@ $bundleHeader = @'
 '@
 
 # Collect headers and implementation content from src/ in topological order
-# We will combine the headers and cpp files cleanly into a single compilation unit.
 $headers = @(
     "src/calendar_engine/meeting_status.h",
     "src/calendar_engine/ics_parser.h",
@@ -101,16 +133,29 @@ $sources = @(
 function Clean-Content([string]$fileContent) {
     $lines = $fileContent -split "`r?`n"
     $cleanLines = @()
+    $inWindhawkMetadata = $false
     foreach ($line in $lines) {
         $trimmed = $line.Trim()
-        # Skip pragma once, local includes, Windhawk metadata if inside src/
+
+        # Handle Windhawk metadata blocks (skip completely when combining source files)
+        if ($trimmed -like '// ==WindhawkMod*' -and $trimmed -notlike '// ==/WindhawkMod*') {
+            $inWindhawkMetadata = $true
+            continue
+        }
+        if ($inWindhawkMetadata) {
+            if ($trimmed -like '// ==/WindhawkMod*') {
+                $inWindhawkMetadata = $false
+            }
+            continue
+        }
+        if ($trimmed -like '// ==/WindhawkMod*') {
+            continue
+        }
+
+        # Skip pragma once and local includes
         if ($trimmed -eq "#pragma once") { continue }
-        if ($trimmed -like '#include "*"' -or $trimmed -like '#include <windhawk_api.h>
-#ifndef WH_MOD_ID
-#define WH_MOD_ID L"teams-calendar-flyout"
-#endif
-#include <windhawk_utils.h>') { continue }
-        if ($trimmed -like '// ==WindhawkMod*' -or $trimmed -like '// @*' -or $trimmed -like '// - *' -or $trimmed -like '//   $*') { continue }
+        if ($trimmed -like '#include "*"' -or $trimmed -like '#include <windhawk_api.h>' -or $trimmed -like '#include <windhawk_utils.h>') { continue }
+
         $cleanLines += $line
     }
     return ($cleanLines -join "`n")
@@ -144,7 +189,8 @@ foreach ($s in $sources) {
 $outputContent = $sb.ToString()
 
 # Write to canonical root teams-calendar-flyout.wh.cpp
-Set-Content -Path "teams-calendar-flyout.wh.cpp" -Value $outputContent -Encoding utf8
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+[System.IO.File]::WriteAllText((Join-Path $WorktreeDir "teams-calendar-flyout.wh.cpp"), $outputContent, $utf8NoBom)
 Write-Host "Wrote root teams-calendar-flyout.wh.cpp ($($outputContent.Length) bytes)"
 
 Write-Host "Bundle generation complete!"
