@@ -1,4 +1,5 @@
 #include "calendar_engine/ics_parser.h"
+#include "calendar_engine/teams_extractor.h"
 
 #include <algorithm>
 #include <cctype>
@@ -478,6 +479,17 @@ std::vector<CalendarEvent> IcsParser::Parse(std::string_view ics_content) const 
                 current_event.end_time = current_event.end_time.to_local(local_tz_offset_minutes_);
             }
 
+            std::string detected_teams = TeamsExtractor::ExtractFromEvent(current_event);
+            if (!detected_teams.empty()) {
+                current_event.is_teams_meeting = true;
+                current_event.teams_join_url = detected_teams;
+                current_event.teams_url = detected_teams;
+            } else {
+                current_event.is_teams_meeting = false;
+                current_event.teams_join_url = "";
+                current_event.teams_url = "";
+            }
+
             events.push_back(current_event);
             in_vevent = false;
             sub_component_depth = 0;
@@ -552,6 +564,9 @@ std::vector<CalendarEvent> IcsParser::Parse(std::string_view ics_content) const 
             }
         } else if (prop_name == "DTEND") {
             current_event.end_time = ParseDateTime(prop_value, prop_params);
+        } else if (prop_name == "URL" || prop_name == "X-MICROSOFT-SKYPETEAMSMEETINGURL") {
+            current_event.teams_join_url = Trim(prop_value);
+            current_event.teams_url = current_event.teams_join_url;
         }
     }
 

@@ -6,6 +6,7 @@
 #include <optional>
 #include <cstdint>
 #include <compare>
+#include "calendar_engine/meeting_status.h"
 
 namespace calendar {
 
@@ -70,6 +71,9 @@ struct CalendarEvent {
     bool is_all_day{false};
     EventStatus status{EventStatus::Confirmed};
     std::string teams_url;
+    bool is_teams_meeting{false};
+    std::string teams_join_url;
+    MeetingTemporalStatus temporal_status{MeetingTemporalStatus::Future};
 
     // Returns whether this event occurs on the given date (based on local start/end times)
     bool occurs_on(const CalendarDate& target_date) const;
