@@ -131,7 +131,7 @@ static void LogToFile(const wchar_t* msg) {
     OutputDebugStringW(_dbg_buf); \
     OutputDebugStringW(L"\n"); \
     LogToFile(_dbg_buf); \
-    if (InternalWh_IsLogEnabled(InternalWhModPtr)) { \
+    if (InternalWhModPtr && InternalWh_IsLogEnabled(InternalWhModPtr)) { \
         InternalWh_Log_Wrapper(L"[%d:%S]: " fmt, __LINE__, __FUNCTION__, ##__VA_ARGS__); \
     } \
 } while(0)
@@ -1356,6 +1356,20 @@ using CreateWindowInBandEx_t = HWND(WINAPI*)(DWORD dwExStyle,
                                              DWORD dwTypeFlags);
 static CreateWindowInBandEx_t CreateWindowInBandEx_Original = nullptr;
 
+using CreateWindowExW_t = HWND(WINAPI*)(DWORD dwExStyle,
+                                        LPCWSTR lpClassName,
+                                        LPCWSTR lpWindowName,
+                                        DWORD dwStyle,
+                                        int X,
+                                        int Y,
+                                        int nWidth,
+                                        int nHeight,
+                                        HWND hWndParent,
+                                        HMENU hMenu,
+                                        HINSTANCE hInstance,
+                                        LPVOID lpParam);
+static CreateWindowExW_t CreateWindowExW_Original = nullptr;
+
 static void OnWindowCreated(HWND hWnd, LPCWSTR lpClassName, const wchar_t* caller) {
     if (!hWnd) return;
     BOOL bTextualClassName = ((ULONG_PTR)lpClassName & ~(ULONG_PTR)0xffff) != 0;
@@ -1377,17 +1391,11 @@ static void OnWindowCreated(HWND hWnd, LPCWSTR lpClassName, const wchar_t* calle
                caller ? caller : L"unknown",
                (DWORD)(ULONG_PTR)hWnd,
                dwThreadId);
-        if (dwThreadId == GetCurrentThreadId()) {
-            Wh_Log(L"[WINDOW] Inicializacao direta na thread criadora");
+        Wh_Log(L"[WINDOW] Postando inicializacao para a fila de mensagens da janela");
+        RunFromWindowThreadViaPostMessage(hWnd, [](PVOID) {
             RegisterCoreWindowEvents();
             OnCalendarOpened();
-        } else {
-            Wh_Log(L"[WINDOW] Inicializacao enviada para a thread da janela");
-            RunFromWindowThread(hWnd, [](PVOID) {
-                RegisterCoreWindowEvents();
-                OnCalendarOpened();
-            }, nullptr);
-        }
+        }, nullptr);
     }
 }
 
@@ -1434,10 +1442,30 @@ static HWND WINAPI CreateWindowInBandEx_Hook(DWORD dwExStyle,
     return hWnd;
 }
 
+static HWND WINAPI CreateWindowExW_Hook(DWORD dwExStyle,
+                                        LPCWSTR lpClassName,
+                                        LPCWSTR lpWindowName,
+                                        DWORD dwStyle,
+                                        int X,
+                                        int Y,
+                                        int nWidth,
+                                        int nHeight,
+                                        HWND hWndParent,
+                                        HMENU hMenu,
+                                        HINSTANCE hInstance,
+                                        LPVOID lpParam) {
+    HWND hWnd = CreateWindowExW_Original(
+        dwExStyle, lpClassName, lpWindowName, dwStyle, X, Y, nWidth, nHeight,
+        hWndParent, hMenu, hInstance, lpParam);
+    if (!hWnd) return hWnd;
+    OnWindowCreated(hWnd, lpClassName, L"CreateWindowExW");
+    return hWnd;
+}
+
 #endif // WH_MOD
 
-// Windhawk mod entry points
-extern "C" __declspec(dllexport) BOOL Wh_ModInit() {
+// Windhawk mod entry points (C++ linkage matching Windhawk's engine ABI)
+BOOL Wh_ModInit() {
     Wh_Log(L"[INIT] Wh_ModInit executado");
     WCHAR processName[MAX_PATH] = {0};
     GetModuleFileNameW(nullptr, processName, MAX_PATH);
@@ -1468,6 +1496,17 @@ extern "C" __declspec(dllexport) BOOL Wh_ModInit() {
         } else {
             Wh_Log(L"[HOOK] CreateWindowInBandEx nao encontrado");
         }
+        auto pCreateWindowExW = (CreateWindowExW_t)GetProcAddress(user32Module, "CreateWindowExW");
+        if (pCreateWindowExW) {
+            Wh_Log(L"[HOOK] CreateWindowExW encontrado");
+            if (WindhawkUtils::SetFunctionHook(pCreateWindowExW, CreateWindowExW_Hook, &CreateWindowExW_Original)) {
+                Wh_Log(L"[HOOK] Hook instalado em CreateWindowExW");
+            } else {
+                Wh_Log(L"[ERROR] Falha ao instalar hook em CreateWindowExW: %lu", GetLastError());
+            }
+        } else {
+            Wh_Log(L"[HOOK] CreateWindowExW nao encontrado");
+        }
     }
 #endif
     bool initialized = calendar::ModLifecycleManager::Instance().Initialize();
@@ -1475,7 +1514,7 @@ extern "C" __declspec(dllexport) BOOL Wh_ModInit() {
     return initialized ? TRUE : FALSE;
 }
 
-extern "C" __declspec(dllexport) void Wh_ModAfterInit() {
+void Wh_ModAfterInit() {
     Wh_Log(L"[INIT] Wh_ModAfterInit executado");
 #ifdef WH_MOD
     auto coreWnds = GetCoreWnds();
@@ -1494,7 +1533,7 @@ extern "C" __declspec(dllexport) void Wh_ModAfterInit() {
 #endif
 }
 
-extern "C" __declspec(dllexport) void Wh_ModSettingsChanged() {
+void Wh_ModSettingsChanged() {
     Wh_Log(L"[CONFIG] Wh_ModSettingsChanged executado");
     calendar::ModLifecycleManager::Instance().OnSettingsChanged();
 #ifdef WH_MOD
@@ -1508,7 +1547,7 @@ extern "C" __declspec(dllexport) void Wh_ModSettingsChanged() {
 #endif
 }
 
-extern "C" __declspec(dllexport) void Wh_ModUninit() {
+void Wh_ModUninit() {
     Wh_Log(L"[LIFECYCLE] Wh_ModUninit executado");
 #ifdef WH_MOD
     for (HWND hCoreWnd : GetCoreWnds()) {

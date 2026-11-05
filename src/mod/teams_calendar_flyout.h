@@ -52,10 +52,8 @@ private:
 
 } // namespace calendar
 
-// Windhawk mod entry points
-extern "C" {
-__declspec(dllexport) BOOL Wh_ModInit();
-__declspec(dllexport) void Wh_ModAfterInit();
-__declspec(dllexport) void Wh_ModSettingsChanged();
-__declspec(dllexport) void Wh_ModUninit();
-}
+// Windhawk mod entry points (C++ linkage matching Windhawk's engine ABI)
+BOOL Wh_ModInit();
+void Wh_ModAfterInit();
+void Wh_ModSettingsChanged();
+void Wh_ModUninit();
