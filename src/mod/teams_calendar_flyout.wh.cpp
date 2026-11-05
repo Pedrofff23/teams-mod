@@ -127,7 +127,7 @@ static void LogToFile(const wchar_t* msg) {
 #undef Wh_Log
 #define Wh_Log(fmt, ...) do { \
     WCHAR _dbg_buf[1024]; \
-    swprintf_s(_dbg_buf, L"[TeamsCalendar][PID:%lu][TID:%lu] " fmt, (unsigned long)GetCurrentProcessId(), (unsigned long)GetCurrentThreadId(), ##__VA_ARGS__); \
+    swprintf_s(_dbg_buf, L"[WH] [TeamsCalendar][PID:%lu][TID:%lu] " fmt, (unsigned long)GetCurrentProcessId(), (unsigned long)GetCurrentThreadId(), ##__VA_ARGS__); \
     OutputDebugStringW(_dbg_buf); \
     OutputDebugStringW(L"\n"); \
     LogToFile(_dbg_buf); \
@@ -933,7 +933,11 @@ static void WalkVisualTree(winrt::Windows::UI::Xaml::DependencyObject const& roo
                     nameView.find(L"Flyout") != std::wstring_view::npos ||
                     nameView.find(L"Focus") != std::wstring_view::npos ||
                     nameView.find(L"Notification") != std::wstring_view::npos) {
-                    Wh_Log(L"[XAML] Relevant named element: %s (Type: %s)", name.c_str(), winrt::get_class_name(fe).c_str());
+                    try {
+                        Wh_Log(L"[XAML] Relevant named element: %s (Type: %s)", name.c_str(), winrt::get_class_name(fe).c_str());
+                    } catch (...) {
+                        Wh_Log(L"[XAML] Relevant named element: %s", name.c_str());
+                    }
                 }
             }
             if (name == L"CalendarControlScrollViewer") {
@@ -1234,7 +1238,10 @@ static bool RunFromWindowThread(HWND hWnd,
     struct RUN_FROM_WINDOW_THREAD_PARAM {
         RunFromWindowThreadProc_t proc;
         PVOID procParam;
+        bool executed;
     };
+
+    RUN_FROM_WINDOW_THREAD_PARAM param{proc, procParam, false};
 
     HHOOK hook = SetWindowsHookEx(
         WH_CALLWNDPROC,
@@ -1242,10 +1249,10 @@ static bool RunFromWindowThread(HWND hWnd,
             if (nCode == HC_ACTION) {
                 const CWPSTRUCT* cwp = (const CWPSTRUCT*)lParam;
                 if (cwp->message == runFromWindowThreadRegisteredMsg) {
-                    RUN_FROM_WINDOW_THREAD_PARAM* param =
-                        (RUN_FROM_WINDOW_THREAD_PARAM*)cwp->lParam;
+                    auto* param = (RUN_FROM_WINDOW_THREAD_PARAM*)cwp->lParam;
                     if (param) {
                         param->proc(param->procParam);
+                        param->executed = true;
                     }
                 }
             }
@@ -1253,17 +1260,20 @@ static bool RunFromWindowThread(HWND hWnd,
         },
         nullptr, dwThreadId);
 
-    if (!hook) {
-        return false;
+    if (hook) {
+        DWORD_PTR dwResult = 0;
+        // Non-blocking timeout: if thread is suspended by Windows PLM, this returns in 150ms instead of deadlocking
+        if (SendMessageTimeoutW(hWnd, runFromWindowThreadRegisteredMsg, 0, (LPARAM)&param,
+                                SMTO_ABORTIFHUNG | SMTO_NORMAL, 150, &dwResult) && param.executed) {
+            UnhookWindowsHookEx(hook);
+            return true;
+        }
+        UnhookWindowsHookEx(hook);
     }
 
-    RUN_FROM_WINDOW_THREAD_PARAM param;
-    param.proc = proc;
-    param.procParam = procParam;
-    SendMessage(hWnd, runFromWindowThreadRegisteredMsg, 0, (LPARAM)&param);
-
-    UnhookWindowsHookEx(hook);
-    return true;
+    // Thread is suspended or busy - queue via PostMessage so it executes the instant the window thread resumes
+    Wh_Log(L"[WINDOW] RunFromWindowThread: thread %lu suspended/busy, falling back to PostMessage", dwThreadId);
+    return RunFromWindowThreadViaPostMessage(hWnd, proc, procParam);
 }
 
 static std::vector<HWND> GetCoreWnds() {
