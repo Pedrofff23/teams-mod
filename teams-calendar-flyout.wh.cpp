@@ -67,6 +67,7 @@ Integrates Microsoft Teams upcoming meetings directly into the native Windows 11
 #include <windows.h>
 #include <wininet.h>
 #include <shellapi.h>
+#include <tlhelp32.h>
 #undef GetCurrentTime
 #ifdef WH_MOD
 #include <windhawk_api.h>
@@ -2389,6 +2390,24 @@ HttpResponse WinINetHttpTransport::Fetch(const std::wstring& url) {
         return HttpResponse{0, "", "Empty URL specified"};
     }
 
+#ifdef WH_MOD
+    const WH_URL_CONTENT* urlContent = Wh_GetUrlContent(url.c_str(), nullptr);
+    if (urlContent) {
+        HttpResponse resp;
+        resp.status_code = urlContent->statusCode;
+        if (urlContent->data && urlContent->length > 0) {
+            resp.body.assign(urlContent->data, urlContent->length);
+        }
+        if (urlContent->statusCode >= 200 && urlContent->statusCode < 300) {
+            resp.error_message = "";
+        } else {
+            resp.error_message = "HTTP error " + std::to_string(urlContent->statusCode);
+        }
+        Wh_FreeUrlContent(urlContent);
+        return resp;
+    }
+#endif
+
     HINTERNET hInternet = InternetOpenW(
         L"TeamsCalendarFlyout/1.0",
         INTERNET_OPEN_TYPE_PRECONFIG,
@@ -3253,6 +3272,7 @@ void XamlInjector::RenderAndInjectLocked(std::optional<CalendarDateTime> referen
 #endif
 
 #include <windows.h>
+#include <tlhelp32.h>
 #include <shellapi.h>
 #include <sstream>
 #include <iomanip>
@@ -3277,6 +3297,17 @@ namespace wuxm = winrt::Windows::UI::Xaml::Media;
 namespace wuc = winrt::Windows::UI::Core;
 
 static void DispatchUpdateEvents();
+#ifdef WH_MOD
+#undef Wh_Log
+#define Wh_Log(fmt, ...) do { \
+    WCHAR _dbg_buf[1024]; \
+    swprintf_s(_dbg_buf, L"[TeamsCalendar][PID:%lu][TID:%lu] " fmt L"\n", (unsigned long)GetCurrentProcessId(), (unsigned long)GetCurrentThreadId(), ##__VA_ARGS__); \
+    OutputDebugStringW(_dbg_buf); \
+    if (InternalWh_IsLogEnabled(InternalWhModPtr)) { \
+        InternalWh_Log_Wrapper(L"[%d:%S]: " fmt, __LINE__, __FUNCTION__, ##__VA_ARGS__); \
+    } \
+} while(0)
+#endif
 #else
 #ifndef Wh_Log
 #define Wh_Log(...) ((void)0)
@@ -3469,6 +3500,7 @@ static wuxc::ScrollBarVisibility m_originalHorizontalScrollBarVisibility{wuxc::S
 [[clang::no_destroy]] static wuxc::Button m_refreshButton{nullptr};
 [[clang::no_destroy]] static wuxc::ScrollViewer m_eventsScrollViewer{nullptr};
 [[clang::no_destroy]] static wuxc::ItemsControl m_itemsControl{nullptr};
+static winrt::agile_ref<wuc::CoreDispatcher> g_agileDispatcher{nullptr};
 
 static winrt::event_token m_calendarViewSelectionChangedToken{};
 static winrt::event_token m_prevBtnToken{};
@@ -3571,6 +3603,18 @@ static void PopulateItemsControl(const std::vector<calendar::AgendaItemViewModel
         border.BorderThickness(wux::Thickness{1, 1, 1, 1});
         border.BorderBrush(wuxm::SolidColorBrush(winrt::Windows::UI::Colors::Transparent()));
 
+        auto sp = wuxc::StackPanel();
+        sp.Spacing(4);
+        sp.HorizontalAlignment(wux::HorizontalAlignment::Center);
+
+        auto titleTb = wuxc::TextBlock();
+        titleTb.Text(L"Teams Calendar Mod Loaded");
+        titleTb.FontSize(12.5);
+        titleTb.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+        titleTb.HorizontalAlignment(wux::HorizontalAlignment::Center);
+        titleTb.Foreground(wuxm::SolidColorBrush(dark ? winrt::Windows::UI::Colors::White() : winrt::Windows::UI::Colors::Black()));
+        sp.Children().Append(titleTb);
+
         auto tb = wuxc::TextBlock();
         auto settings = calendar::ModLifecycleManager::Instance().GetSettings();
         if (settings.feed_url.empty()) {
@@ -3584,10 +3628,12 @@ static void PopulateItemsControl(const std::vector<calendar::AgendaItemViewModel
             tb.Text(isToday ? L"No upcoming Teams meetings today" : L"No upcoming Teams meetings for this date");
         }
         tb.Opacity(0.7);
+        tb.FontSize(11.0);
         tb.TextWrapping(wux::TextWrapping::Wrap);
         tb.HorizontalAlignment(wux::HorizontalAlignment::Center);
         tb.IsTextSelectionEnabled(true);
-        border.Child(tb);
+        sp.Children().Append(tb);
+        border.Child(sp);
         m_itemsControl.Items().Append(border);
         return;
     }
@@ -3747,17 +3793,16 @@ static void RefreshAgendaList() {
 }
 
 static void DispatchUpdateEvents() {
-    wuxc::ItemsControl itemsControl{nullptr};
-    if (m_itemsControl) {
-        itemsControl = m_itemsControl;
+    if (!g_agileDispatcher) return;
+    try {
+        if (auto dispatcher = g_agileDispatcher.get()) {
+            dispatcher.TryRunAsync(wuc::CoreDispatcherPriority::Normal, []() {
+                RefreshAgendaList();
+            });
+        }
+    } catch (...) {
+        Wh_Log(L"[ERROR] Exception in DispatchUpdateEvents");
     }
-    if (!itemsControl) return;
-    auto dispatcher = itemsControl.Dispatcher();
-    if (!dispatcher) return;
-
-    dispatcher.TryRunAsync(wuc::CoreDispatcherPriority::Normal, []() {
-        RefreshAgendaList();
-    });
 }
 
 static void ChangeSelectedDay(int deltaDays) {
@@ -3829,8 +3874,11 @@ static void ResetDatePickerToToday() {
 static void ReplaceCalendarContent(wuxc::ScrollViewer const& host) {
     if (!host) return;
     DWORD currentThread = GetCurrentThreadId();
+    Wh_Log(L"[XAML] ReplaceCalendarContent executado na thread %lu", currentThread);
+
     DWORD expected = 0;
     if (!g_ownerThreadId.compare_exchange_strong(expected, currentThread) && expected != currentThread) {
+        Wh_Log(L"[XAML] ReplaceCalendarContent rejeitado: thread %lu != owner %lu", currentThread, expected);
         return;
     }
     RegisterCoreWindowEvents();
@@ -3845,6 +3893,9 @@ static void ReplaceCalendarContent(wuxc::ScrollViewer const& host) {
                 if (m_originalCalendarContent) m_hostScrollViewer.Content(m_originalCalendarContent);
                 m_hostScrollViewer.VerticalScrollBarVisibility(m_originalVerticalScrollBarVisibility);
                 m_hostScrollViewer.HorizontalScrollBarVisibility(m_originalHorizontalScrollBarVisibility);
+                Wh_Log(L"[RESTORE] Original content restored on previous host");
+            } catch (winrt::hresult_error const& ex) {
+                Wh_Log(L"[ERROR] WinRT exception restoring previous host: 0x%08X", (DWORD)ex.code());
             } catch (...) {}
             m_originalCalendarContent = nullptr;
             m_hostScrollViewer = nullptr;
@@ -3998,6 +4049,7 @@ static void ReplaceCalendarContent(wuxc::ScrollViewer const& host) {
             m_rootGridThemeChangedToken = m_rootGrid.ActualThemeChanged([](auto const&, auto const&) {
                 RefreshAgendaList();
             });
+            Wh_Log(L"[XAML] Custom interface created");
         }
 
         ResetDatePickerToToday();
@@ -4019,16 +4071,22 @@ static void ReplaceCalendarContent(wuxc::ScrollViewer const& host) {
             m_originalCalendarContent = host.Content();
             m_originalVerticalScrollBarVisibility = host.VerticalScrollBarVisibility();
             m_originalHorizontalScrollBarVisibility = host.HorizontalScrollBarVisibility();
+            Wh_Log(L"[XAML] Original content saved");
         }
         m_hostScrollViewer = host;
 
         host.VerticalScrollBarVisibility(wuxc::ScrollBarVisibility::Disabled);
         host.HorizontalScrollBarVisibility(wuxc::ScrollBarVisibility::Disabled);
         host.Content(m_rootGrid);
+        Wh_Log(L"[XAML] Custom interface attached");
         RevokeLayoutUpdated();
-        OnCalendarOpened();
+        RefreshAgendaList();
+    } catch (winrt::hresult_error const& ex) {
+        Wh_Log(L"[ERROR] WinRT exception in ReplaceCalendarContent: 0x%08X: %s", (DWORD)ex.code(), ex.message().c_str());
+    } catch (std::exception const& ex) {
+        Wh_Log(L"[ERROR] std::exception in ReplaceCalendarContent: %S", ex.what());
     } catch (...) {
-        Wh_Log(L"Exception in ReplaceCalendarContent");
+        Wh_Log(L"[ERROR] Unknown exception in ReplaceCalendarContent");
     }
 }
 
@@ -4042,9 +4100,11 @@ static void WalkVisualTree(winrt::Windows::UI::Xaml::DependencyObject const& roo
             auto name = fe.Name();
             if (name == L"CalendarControlScrollViewer") {
                 if (auto scrollViewer = fe.try_as<wuxc::ScrollViewer>()) {
-                    if (scrollViewer != m_hostScrollViewer) {
+                    Wh_Log(L"[XAML] CalendarControlScrollViewer found: %p", winrt::get_abi(scrollViewer));
+                    if (scrollViewer != m_hostScrollViewer || scrollViewer.Content() != m_rootGrid) {
                         ReplaceCalendarContent(scrollViewer);
                     }
+                    return;
                 }
             }
         }
@@ -4072,12 +4132,12 @@ static void OnCalendarOpened() {
     }
 
     ULONGLONG currentTick = GetTickCount64();
-    if (m_rootGrid && currentTick - g_lastOpenTick < 300) {
+    if (m_rootGrid && m_hostScrollViewer && m_hostScrollViewer.Content() == m_rootGrid && (currentTick - g_lastOpenTick < 500)) {
         return;
     }
     g_lastOpenTick = currentTick;
 
-    Wh_Log(L"OnCalendarOpened: scanning visual tree");
+    Wh_Log(L"[WINDOW] OnCalendarOpened: scanning visual tree (Thread %lu)", GetCurrentThreadId());
 
     ResetDatePickerToToday();
 
@@ -4088,37 +4148,53 @@ static void OnCalendarOpened() {
 
     try {
         auto window = winrt::Windows::UI::Xaml::Window::Current();
-        if (window && window.Content()) {
-            if (auto fe = window.Content().try_as<winrt::Windows::UI::Xaml::FrameworkElement>()) {
-                if (!m_rootGrid && t_coreWindowData.layoutUpdatedToken.value == 0) {
-                    t_coreWindowData.layoutUpdatedFe = fe;
-                    t_coreWindowData.layoutUpdatedToken = fe.LayoutUpdated([](wf::IInspectable const&, wf::IInspectable const&) {
-                        if (m_rootGrid) {
-                            RevokeLayoutUpdated();
-                            return;
+        if (!window) {
+            Wh_Log(L"[XAML] Window::Current() is null");
+            return;
+        }
+        Wh_Log(L"[XAML] Window::Current acquired");
+
+        if (!window.Content()) {
+            Wh_Log(L"[XAML] Window content is null");
+            return;
+        }
+        Wh_Log(L"[XAML] Window content acquired");
+
+        if (auto fe = window.Content().try_as<winrt::Windows::UI::Xaml::FrameworkElement>()) {
+            if ((!m_rootGrid || (m_hostScrollViewer && m_hostScrollViewer.Content() != m_rootGrid)) &&
+                t_coreWindowData.layoutUpdatedToken.value == 0) {
+                t_coreWindowData.layoutUpdatedFe = fe;
+                t_coreWindowData.layoutUpdatedToken = fe.LayoutUpdated([](wf::IInspectable const&, wf::IInspectable const&) {
+                    if (m_rootGrid && m_hostScrollViewer && m_hostScrollViewer.Content() == m_rootGrid) {
+                        RevokeLayoutUpdated();
+                        return;
+                    }
+                    auto w = winrt::Windows::UI::Xaml::Window::Current();
+                    if (w) {
+                        if (w.Content()) WalkVisualTree(w.Content());
+                        auto popups = winrt::Windows::UI::Xaml::Media::VisualTreeHelper::GetOpenPopups(w);
+                        for (auto popup : popups) {
+                            if (popup.Child()) WalkVisualTree(popup.Child());
                         }
-                        auto w = winrt::Windows::UI::Xaml::Window::Current();
-                        if (w) {
-                            if (w.Content()) WalkVisualTree(w.Content());
-                            auto popups = winrt::Windows::UI::Xaml::Media::VisualTreeHelper::GetOpenPopups(w);
-                            for (auto popup : popups) {
-                                if (popup.Child()) WalkVisualTree(popup.Child());
-                            }
-                        }
-                        if (m_rootGrid) {
-                            RevokeLayoutUpdated();
-                        }
-                    });
-                }
-            }
-            WalkVisualTree(window.Content());
-            auto popups = winrt::Windows::UI::Xaml::Media::VisualTreeHelper::GetOpenPopups(window);
-            for (auto popup : popups) {
-                if (popup.Child()) WalkVisualTree(popup.Child());
+                    }
+                    if (m_rootGrid && m_hostScrollViewer && m_hostScrollViewer.Content() == m_rootGrid) {
+                        RevokeLayoutUpdated();
+                    }
+                });
             }
         }
+        Wh_Log(L"[XAML] Visual tree scan started");
+        WalkVisualTree(window.Content());
+        auto popups = winrt::Windows::UI::Xaml::Media::VisualTreeHelper::GetOpenPopups(window);
+        Wh_Log(L"[XAML] Open popups found: %u", popups.Size());
+        for (auto popup : popups) {
+            if (popup.Child()) WalkVisualTree(popup.Child());
+        }
+        Wh_Log(L"[XAML] Visual tree scan completed");
+    } catch (winrt::hresult_error const& ex) {
+        Wh_Log(L"[ERROR] WinRT exception in OnCalendarOpened: 0x%08X: %s", (DWORD)ex.code(), ex.message().c_str());
     } catch (...) {
-        Wh_Log(L"Exception getting Window::Current()");
+        Wh_Log(L"[ERROR] Exception in OnCalendarOpened");
     }
 }
 
@@ -4128,30 +4204,39 @@ static void RegisterCoreWindowEvents() {
         if (!coreWindow || t_coreWindowData.coreWindow == coreWindow) {
             return;
         }
-        Wh_Log(L"Registering CoreWindow Activated & VisibilityChanged for thread %u", GetCurrentThreadId());
+        Wh_Log(L"[WINDOW] Registering CoreWindow Activated & VisibilityChanged for thread %u", GetCurrentThreadId());
+
+        auto disp = coreWindow.Dispatcher();
+        if (disp) {
+            g_agileDispatcher = winrt::make_agile(disp);
+        }
+
         t_coreWindowData.activatedToken = coreWindow.Activated(
             [](auto&&, wuc::WindowActivatedEventArgs const& args) {
                 if (args.WindowActivationState() != wuc::CoreWindowActivationState::Deactivated) {
-                    Wh_Log(L"CoreWindow Activated");
+                    Wh_Log(L"[WINDOW] CoreWindow Activated (State: %d)", (int)args.WindowActivationState());
                     OnCalendarOpened();
                 }
             });
         t_coreWindowData.visibilityChangedToken = coreWindow.VisibilityChanged(
             [](auto&&, wuc::VisibilityChangedEventArgs const& args) {
                 if (args.Visible()) {
-                    Wh_Log(L"CoreWindow VisibilityChanged: Visible");
+                    Wh_Log(L"[WINDOW] CoreWindow VisibilityChanged (Visible: %d)", (int)args.Visible());
                     OnCalendarOpened();
                 }
             });
         t_coreWindowData.coreWindow = coreWindow;
+    } catch (winrt::hresult_error const& ex) {
+        Wh_Log(L"[ERROR] Failed to register CoreWindow events: 0x%08X: %s", (DWORD)ex.code(), ex.message().c_str());
     } catch (...) {
-        Wh_Log(L"Failed to register CoreWindow events");
+        Wh_Log(L"[ERROR] Failed to register CoreWindow events");
     }
 }
 
 static void UnregisterCoreWindowEvents() {
     try {
         if (t_coreWindowData.coreWindow) {
+            Wh_Log(L"[WINDOW] Unregistering CoreWindow events");
             if (t_coreWindowData.activatedToken.value != 0) {
                 t_coreWindowData.coreWindow.Activated(t_coreWindowData.activatedToken);
                 t_coreWindowData.activatedToken = {};
@@ -4166,6 +4251,7 @@ static void UnregisterCoreWindowEvents() {
 }
 
 static void RestoreCalendarContent() {
+    Wh_Log(L"[RESTORE] Restoring original calendar content");
     try {
         if (m_prevDayButton && m_prevBtnToken.value != 0) {
             m_prevDayButton.Click(m_prevBtnToken);
@@ -4225,6 +4311,7 @@ static void RestoreCalendarContent() {
     m_calendarView = nullptr;
     g_ownerThreadId.store(0);
     g_lastOpenTick.store(0);
+    Wh_Log(L"[RESTORE] Original calendar content restored successfully");
 }
 
 // Window thread execution helpers
@@ -4277,14 +4364,6 @@ static bool RunFromWindowThreadViaPostMessage(HWND hWnd,
 static bool RunFromWindowThread(HWND hWnd,
                                 RunFromWindowThreadProc_t proc,
                                 PVOID procParam) {
-    static const UINT runFromWindowThreadRegisteredMsg =
-        RegisterWindowMessage(L"Windhawk_RunFromWindowThread_" WH_MOD_ID);
-
-    struct RUN_FROM_WINDOW_THREAD_PARAM {
-        RunFromWindowThreadProc_t proc;
-        PVOID procParam;
-    };
-
     DWORD dwThreadId = GetWindowThreadProcessId(hWnd, nullptr);
     if (dwThreadId == 0) return false;
 
@@ -4293,6 +4372,17 @@ static bool RunFromWindowThread(HWND hWnd,
         return true;
     }
 
+    static const UINT runFromWindowThreadRegisteredMsg =
+        RegisterWindowMessage(L"Windhawk_RunFromWindowThread_" WH_MOD_ID);
+
+    struct RUN_FROM_WINDOW_THREAD_PARAM {
+        RunFromWindowThreadProc_t proc;
+        PVOID procParam;
+        bool executed;
+    };
+
+    RUN_FROM_WINDOW_THREAD_PARAM param{proc, procParam, false};
+
     HHOOK hook = SetWindowsHookEx(
         WH_CALLWNDPROC,
         [](int nCode, WPARAM wParam, LPARAM lParam) -> LRESULT {
@@ -4300,43 +4390,75 @@ static bool RunFromWindowThread(HWND hWnd,
                 const CWPSTRUCT* cwp = (const CWPSTRUCT*)lParam;
                 if (cwp->message == runFromWindowThreadRegisteredMsg) {
                     auto* param = (RUN_FROM_WINDOW_THREAD_PARAM*)cwp->lParam;
-                    if (param) param->proc(param->procParam);
+                    if (param) {
+                        param->proc(param->procParam);
+                        param->executed = true;
+                    }
                 }
             }
             return CallNextHookEx(nullptr, nCode, wParam, lParam);
         },
         nullptr, dwThreadId);
-    if (!hook) return false;
 
-    RUN_FROM_WINDOW_THREAD_PARAM param{proc, procParam};
-    SendMessage(hWnd, runFromWindowThreadRegisteredMsg, 0, (LPARAM)&param);
-    UnhookWindowsHookEx(hook);
-    return true;
+    if (hook) {
+        DWORD_PTR dwResult = 0;
+        SendMessageTimeoutW(hWnd, runFromWindowThreadRegisteredMsg, 0, (LPARAM)&param, SMTO_NORMAL, 2000, &dwResult);
+        UnhookWindowsHookEx(hook);
+        if (param.executed) {
+            return true;
+        }
+    }
+
+    // Fallback to PostMessage if SendMessage did not execute
+    Wh_Log(L"[WINDOW] RunFromWindowThread: SendMessage fallback to PostMessage");
+    return RunFromWindowThreadViaPostMessage(hWnd, proc, procParam);
 }
 
 static std::vector<HWND> GetCoreWnds() {
-    struct ENUM_WINDOWS_PARAM {
-        std::vector<HWND>* hWnds;
-    };
     std::vector<HWND> hWnds;
-    ENUM_WINDOWS_PARAM param = {&hWnds};
-    EnumWindows(
-        [](HWND hWnd, LPARAM lParam) -> BOOL {
-            auto& p = *(ENUM_WINDOWS_PARAM*)lParam;
-            DWORD dwProcessId = 0;
-            if (!GetWindowThreadProcessId(hWnd, &dwProcessId) || dwProcessId != GetCurrentProcessId()) {
-                return TRUE;
+    auto checkWnd = [&hWnds](HWND hWnd) {
+        if (!hWnd) return;
+        DWORD dwProcessId = 0;
+        if (!GetWindowThreadProcessId(hWnd, &dwProcessId) || dwProcessId != GetCurrentProcessId()) {
+            return;
+        }
+        WCHAR szClassName[64];
+        if (GetClassNameW(hWnd, szClassName, ARRAYSIZE(szClassName)) == 0) {
+            return;
+        }
+        if (_wcsicmp(szClassName, L"Windows.UI.Core.CoreWindow") == 0) {
+            if (std::find(hWnds.begin(), hWnds.end(), hWnd) == hWnds.end()) {
+                hWnds.push_back(hWnd);
             }
-            WCHAR szClassName[64];
-            if (GetClassNameW(hWnd, szClassName, ARRAYSIZE(szClassName)) == 0) {
-                return TRUE;
-            }
-            if (_wcsicmp(szClassName, L"Windows.UI.Core.CoreWindow") == 0) {
-                p.hWnds->push_back(hWnd);
-            }
-            return TRUE;
-        },
-        (LPARAM)&param);
+        }
+    };
+
+    // 1. EnumWindows
+    EnumWindows([](HWND hWnd, LPARAM lParam) -> BOOL {
+        auto& fn = *(decltype(checkWnd)*)lParam;
+        fn(hWnd);
+        return TRUE;
+    }, (LPARAM)&checkWnd);
+
+    // 2. EnumThreadWindows across all threads of current process
+    HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (hSnapshot != INVALID_HANDLE_VALUE) {
+        THREADENTRY32 te{ sizeof(THREADENTRY32) };
+        DWORD curPid = GetCurrentProcessId();
+        if (Thread32First(hSnapshot, &te)) {
+            do {
+                if (te.th32OwnerProcessID == curPid) {
+                    EnumThreadWindows(te.th32ThreadID, [](HWND hWnd, LPARAM lParam) -> BOOL {
+                        auto& fn = *(decltype(checkWnd)*)lParam;
+                        fn(hWnd);
+                        return TRUE;
+                    }, (LPARAM)&checkWnd);
+                }
+            } while (Thread32Next(hSnapshot, &te));
+        }
+        CloseHandle(hSnapshot);
+    }
+
     return hWnds;
 }
 
@@ -4372,16 +4494,27 @@ using CreateWindowInBandEx_t = HWND(WINAPI*)(DWORD dwExStyle,
                                              DWORD dwTypeFlags);
 static CreateWindowInBandEx_t CreateWindowInBandEx_Original = nullptr;
 
-static void OnWindowCreated(HWND hWnd, LPCWSTR lpClassName, const char* caller) {
+static void OnWindowCreated(HWND hWnd, LPCWSTR lpClassName, const wchar_t* caller) {
     if (!hWnd) return;
-    WCHAR szClassName[64] = {0};
-    if (lpClassName) {
-        wcsncpy_s(szClassName, lpClassName, _TRUNCATE);
+    BOOL bTextualClassName = ((ULONG_PTR)lpClassName & ~(ULONG_PTR)0xffff) != 0;
+    bool isCoreWindow = false;
+    if (bTextualClassName) {
+        if (_wcsicmp(lpClassName, L"Windows.UI.Core.CoreWindow") == 0) {
+            isCoreWindow = true;
+        }
     } else {
-        GetClassNameW(hWnd, szClassName, ARRAYSIZE(szClassName));
+        WCHAR szClassName[64] = {0};
+        if (GetClassNameW(hWnd, szClassName, ARRAYSIZE(szClassName)) != 0 &&
+            _wcsicmp(szClassName, L"Windows.UI.Core.CoreWindow") == 0) {
+            isCoreWindow = true;
+        }
     }
-    if (_wcsicmp(szClassName, L"Windows.UI.Core.CoreWindow") == 0) {
-        Wh_Log(L"CoreWindow created (%s), dispatching initialization to window thread", (caller ? L"band" : L"unknown"));
+    if (isCoreWindow) {
+        Wh_Log(L"[WINDOW] CoreWindow detectado via %s (HWND: %08X, TID: %lu)",
+               caller ? caller : L"unknown",
+               (DWORD)(ULONG_PTR)hWnd,
+               GetWindowThreadProcessId(hWnd, nullptr));
+        Wh_Log(L"[WINDOW] Inicializacao enviada para a thread da janela");
         RunFromWindowThreadViaPostMessage(hWnd, [](PVOID) {
             RegisterCoreWindowEvents();
             OnCalendarOpened();
@@ -4406,7 +4539,7 @@ static HWND WINAPI CreateWindowInBand_Hook(DWORD dwExStyle,
         dwExStyle, lpClassName, lpWindowName, dwStyle, X, Y, nWidth, nHeight,
         hWndParent, hMenu, hInstance, lpParam, dwBand);
     if (!hWnd) return hWnd;
-    OnWindowCreated(hWnd, lpClassName, __FUNCTION__);
+    OnWindowCreated(hWnd, lpClassName, L"CreateWindowInBand");
     return hWnd;
 }
 
@@ -4428,7 +4561,7 @@ static HWND WINAPI CreateWindowInBandEx_Hook(DWORD dwExStyle,
         dwExStyle, lpClassName, lpWindowName, dwStyle, X, Y, nWidth, nHeight,
         hWndParent, hMenu, hInstance, lpParam, dwBand, dwTypeFlags);
     if (!hWnd) return hWnd;
-    OnWindowCreated(hWnd, lpClassName, __FUNCTION__);
+    OnWindowCreated(hWnd, lpClassName, L"CreateWindowInBandEx");
     return hWnd;
 }
 
@@ -4436,28 +4569,51 @@ static HWND WINAPI CreateWindowInBandEx_Hook(DWORD dwExStyle,
 
 // Windhawk mod entry points
 extern "C" __declspec(dllexport) BOOL Wh_ModInit() {
-    Wh_Log(L"Teams Calendar Flyout initializing");
+    Wh_Log(L"[INIT] Wh_ModInit executado");
+    WCHAR processName[MAX_PATH] = {0};
+    GetModuleFileNameW(nullptr, processName, MAX_PATH);
+    Wh_Log(L"[INIT] Target process: %s (PID: %lu)", processName, GetCurrentProcessId());
+
 #ifdef WH_MOD
     HMODULE user32Module = GetModuleHandleW(L"user32.dll");
     if (user32Module) {
         auto pCreateWindowInBand = (CreateWindowInBand_t)GetProcAddress(user32Module, "CreateWindowInBand");
         if (pCreateWindowInBand) {
-            WindhawkUtils::SetFunctionHook(pCreateWindowInBand, CreateWindowInBand_Hook, &CreateWindowInBand_Original);
+            Wh_Log(L"[HOOK] CreateWindowInBand encontrado");
+            if (WindhawkUtils::SetFunctionHook(pCreateWindowInBand, CreateWindowInBand_Hook, &CreateWindowInBand_Original)) {
+                Wh_Log(L"[HOOK] Hook instalado em CreateWindowInBand");
+            } else {
+                Wh_Log(L"[ERROR] Falha ao instalar hook em CreateWindowInBand: %lu", GetLastError());
+            }
+        } else {
+            Wh_Log(L"[HOOK] CreateWindowInBand nao encontrado");
         }
         auto pCreateWindowInBandEx = (CreateWindowInBandEx_t)GetProcAddress(user32Module, "CreateWindowInBandEx");
         if (pCreateWindowInBandEx) {
-            WindhawkUtils::SetFunctionHook(pCreateWindowInBandEx, CreateWindowInBandEx_Hook, &CreateWindowInBandEx_Original);
+            Wh_Log(L"[HOOK] CreateWindowInBandEx encontrado");
+            if (WindhawkUtils::SetFunctionHook(pCreateWindowInBandEx, CreateWindowInBandEx_Hook, &CreateWindowInBandEx_Original)) {
+                Wh_Log(L"[HOOK] Hook instalado em CreateWindowInBandEx");
+            } else {
+                Wh_Log(L"[ERROR] Falha ao instalar hook em CreateWindowInBandEx: %lu", GetLastError());
+            }
+        } else {
+            Wh_Log(L"[HOOK] CreateWindowInBandEx nao encontrado");
         }
     }
 #endif
-    return calendar::ModLifecycleManager::Instance().Initialize() ? TRUE : FALSE;
+    bool initialized = calendar::ModLifecycleManager::Instance().Initialize();
+    Wh_Log(L"[INIT] ModLifecycleManager::Initialize resultado: %d", initialized ? 1 : 0);
+    return initialized ? TRUE : FALSE;
 }
 
 extern "C" __declspec(dllexport) void Wh_ModAfterInit() {
-    Wh_Log(L"Teams Calendar Flyout after init");
+    Wh_Log(L"[INIT] Wh_ModAfterInit executado");
 #ifdef WH_MOD
-    for (HWND hCoreWnd : GetCoreWnds()) {
-        Wh_Log(L"Initializing for existing CoreWindow: %08X", (DWORD)(ULONG_PTR)hCoreWnd);
+    auto coreWnds = GetCoreWnds();
+    Wh_Log(L"[WINDOW] CoreWindows existentes encontradas: %zu", coreWnds.size());
+    for (HWND hCoreWnd : coreWnds) {
+        Wh_Log(L"[WINDOW] CoreWindow detectado: HWND %08X (TID: %lu)", (DWORD)(ULONG_PTR)hCoreWnd, GetWindowThreadProcessId(hCoreWnd, nullptr));
+        Wh_Log(L"[WINDOW] Inicializacao enviada para a thread da janela");
         RunFromWindowThread(
             hCoreWnd,
             [](PVOID) {
@@ -4470,15 +4626,24 @@ extern "C" __declspec(dllexport) void Wh_ModAfterInit() {
 }
 
 extern "C" __declspec(dllexport) void Wh_ModSettingsChanged() {
-    Wh_Log(L"Teams Calendar Flyout settings changed");
+    Wh_Log(L"[CONFIG] Wh_ModSettingsChanged executado");
     calendar::ModLifecycleManager::Instance().OnSettingsChanged();
+#ifdef WH_MOD
+    if (g_agileDispatcher) {
+        if (auto disp = g_agileDispatcher.get()) {
+            disp.TryRunAsync(wuc::CoreDispatcherPriority::Normal, []() {
+                RefreshAgendaList();
+            });
+        }
+    }
+#endif
 }
 
 extern "C" __declspec(dllexport) void Wh_ModUninit() {
-    Wh_Log(L"Teams Calendar Flyout uninitializing");
+    Wh_Log(L"[LIFECYCLE] Wh_ModUninit executado");
 #ifdef WH_MOD
     for (HWND hCoreWnd : GetCoreWnds()) {
-        Wh_Log(L"Uninitializing for %08X", (DWORD)(ULONG_PTR)hCoreWnd);
+        Wh_Log(L"[LIFECYCLE] Restaurando janela: %08X", (DWORD)(ULONG_PTR)hCoreWnd);
         RunFromWindowThread(
             hCoreWnd,
             [](PVOID) {
@@ -4490,6 +4655,7 @@ extern "C" __declspec(dllexport) void Wh_ModUninit() {
     }
 #endif
     calendar::ModLifecycleManager::Instance().Uninitialize();
+    Wh_Log(L"[LIFECYCLE] Desinicializacao concluida");
 }
 
 

@@ -76,6 +76,7 @@ Integrates Microsoft Teams upcoming meetings directly into the native Windows 11
 #include <windows.h>
 #include <wininet.h>
 #include <shellapi.h>
+#include <tlhelp32.h>
 #undef GetCurrentTime
 #ifdef WH_MOD
 #include <windhawk_api.h>

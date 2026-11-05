@@ -19,6 +19,24 @@ HttpResponse WinINetHttpTransport::Fetch(const std::wstring& url) {
         return HttpResponse{0, "", "Empty URL specified"};
     }
 
+#ifdef WH_MOD
+    const WH_URL_CONTENT* urlContent = Wh_GetUrlContent(url.c_str(), nullptr);
+    if (urlContent) {
+        HttpResponse resp;
+        resp.status_code = urlContent->statusCode;
+        if (urlContent->data && urlContent->length > 0) {
+            resp.body.assign(urlContent->data, urlContent->length);
+        }
+        if (urlContent->statusCode >= 200 && urlContent->statusCode < 300) {
+            resp.error_message = "";
+        } else {
+            resp.error_message = "HTTP error " + std::to_string(urlContent->statusCode);
+        }
+        Wh_FreeUrlContent(urlContent);
+        return resp;
+    }
+#endif
+
     HINTERNET hInternet = InternetOpenW(
         L"TeamsCalendarFlyout/1.0",
         INTERNET_OPEN_TYPE_PRECONFIG,
