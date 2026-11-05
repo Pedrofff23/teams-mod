@@ -55,6 +55,7 @@ private:
 // Windhawk mod entry points
 extern "C" {
 __declspec(dllexport) BOOL Wh_ModInit();
+__declspec(dllexport) void Wh_ModAfterInit();
 __declspec(dllexport) void Wh_ModSettingsChanged();
 __declspec(dllexport) void Wh_ModUninit();
 }

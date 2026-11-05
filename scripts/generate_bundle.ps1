@@ -16,7 +16,8 @@ $bundleHeader = @'
 // @github          https://github.com/Pedrofff23/teams-mod
 // @include         ShellHost.exe
 // @include         ShellExperienceHost.exe
-// @compilerOptions -lwininet -lole32 -lshell32
+// @architecture    x86-64
+// @compilerOptions -lole32 -loleaut32 -lruntimeobject -lwininet -lshell32
 // ==/WindhawkMod==
 
 // ==WindhawkModReadme==
@@ -75,12 +76,28 @@ Integrates Microsoft Teams upcoming meetings directly into the native Windows 11
 #include <windows.h>
 #include <wininet.h>
 #include <shellapi.h>
+#undef GetCurrentTime
 #ifdef WH_MOD
 #include <windhawk_api.h>
 #ifndef WH_MOD_ID
 #define WH_MOD_ID L"teams-calendar-flyout"
 #endif
 #include <windhawk_utils.h>
+
+#include <winrt/Windows.ApplicationModel.DataTransfer.h>
+#include <winrt/Windows.Foundation.Collections.h>
+#include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Globalization.h>
+#include <winrt/Windows.System.UserProfile.h>
+#include <winrt/Windows.System.h>
+#include <winrt/Windows.UI.Core.h>
+#include <winrt/Windows.UI.Text.h>
+#include <winrt/Windows.UI.Xaml.Controls.Primitives.h>
+#include <winrt/Windows.UI.Xaml.Controls.h>
+#include <winrt/Windows.UI.Xaml.Input.h>
+#include <winrt/Windows.UI.Xaml.Media.h>
+#include <winrt/Windows.UI.Xaml.h>
+#include <winrt/base.h>
 #endif
 #include <string>
 #include <string_view>
@@ -102,6 +119,7 @@ Integrates Microsoft Teams upcoming meetings directly into the native Windows 11
 #include <functional>
 #include <compare>
 #include <array>
+#include <iomanip>
 
 '@
 
@@ -152,9 +170,9 @@ function Clean-Content([string]$fileContent) {
             continue
         }
 
-        # Skip pragma once and local includes
-        if ($trimmed -eq "#pragma once") { continue }
-        if ($trimmed -like '#include "*"' -or $trimmed -like '#include <windhawk_api.h>' -or $trimmed -like '#include <windhawk_utils.h>') { continue }
+        # Skip pragma once and redundant system/winrt includes
+        if ($trimmed -eq "#pragma once" -or $trimmed -eq "#undef GetCurrentTime") { continue }
+        if ($trimmed -like '#include "*"' -or $trimmed -like '#include <windhawk_api.h>' -or $trimmed -like '#include <windhawk_utils.h>' -or $trimmed -like '#include <winrt/*>') { continue }
 
         $cleanLines += $line
     }
