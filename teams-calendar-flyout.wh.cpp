@@ -162,9 +162,33 @@ public:
 #include <vector>
 #include <optional>
 #include <cstdint>
+#include <cctype>
 #include <compare>
 
 namespace calendar {
+
+inline std::string_view TrimWhitespace(std::string_view s) {
+    while (!s.empty() && (s.front() == ' ' || s.front() == '\t' || s.front() == '\r' || s.front() == '\n')) {
+        s.remove_prefix(1);
+    }
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r' || s.back() == '\n')) {
+        s.remove_suffix(1);
+    }
+    return s;
+}
+
+inline bool EqualIgnoreCaseTrimmed(std::string_view a, std::string_view b) {
+    a = TrimWhitespace(a);
+    b = TrimWhitespace(b);
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(a[i])) !=
+            std::tolower(static_cast<unsigned char>(b[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
 
 struct CalendarDate {
     int year{0};
@@ -952,29 +976,6 @@ void MeetingStatusCalculator::EnrichEvents(std::vector<CalendarEvent>& events, c
 namespace calendar {
 
 namespace {
-
-inline std::string_view TrimWhitespace(std::string_view s) {
-    while (!s.empty() && (s.front() == ' ' || s.front() == '\t' || s.front() == '\r' || s.front() == '\n')) {
-        s.remove_prefix(1);
-    }
-    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r' || s.back() == '\n')) {
-        s.remove_suffix(1);
-    }
-    return s;
-}
-
-inline bool EqualIgnoreCaseTrimmed(std::string_view a, std::string_view b) {
-    a = TrimWhitespace(a);
-    b = TrimWhitespace(b);
-    if (a.size() != b.size()) return false;
-    for (size_t i = 0; i < a.size(); ++i) {
-        if (std::tolower(static_cast<unsigned char>(a[i])) !=
-            std::tolower(static_cast<unsigned char>(b[i]))) {
-            return false;
-        }
-    }
-    return true;
-}
 
 // Howard Hinnant's civil date to days since 1970-01-01
 int64_t DaysFromCivil(int y, unsigned m, unsigned d) noexcept {
@@ -2328,33 +2329,6 @@ void ModSettings::LoadFromWindhawk() {
 
 namespace calendar {
 
-namespace {
-
-inline std::string_view TrimWhitespace(std::string_view s) {
-    while (!s.empty() && (s.front() == ' ' || s.front() == '\t' || s.front() == '\r' || s.front() == '\n')) {
-        s.remove_prefix(1);
-    }
-    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r' || s.back() == '\n')) {
-        s.remove_suffix(1);
-    }
-    return s;
-}
-
-inline bool EqualIgnoreCaseTrimmed(std::string_view a, std::string_view b) {
-    a = TrimWhitespace(a);
-    b = TrimWhitespace(b);
-    if (a.size() != b.size()) return false;
-    for (size_t i = 0; i < a.size(); ++i) {
-        if (std::tolower(static_cast<unsigned char>(a[i])) !=
-            std::tolower(static_cast<unsigned char>(b[i]))) {
-            return false;
-        }
-    }
-    return true;
-}
-
-} // namespace
-
 std::string_view to_string(FetchStatus status) {
     switch (status) {
         case FetchStatus::Idle: return "Idle";
@@ -2777,29 +2751,6 @@ void HttpFetcher::WorkerLoop() {
 namespace calendar {
 
 namespace {
-
-inline std::string_view TrimWhitespace(std::string_view s) {
-    while (!s.empty() && (s.front() == ' ' || s.front() == '\t' || s.front() == '\r' || s.front() == '\n')) {
-        s.remove_prefix(1);
-    }
-    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r' || s.back() == '\n')) {
-        s.remove_suffix(1);
-    }
-    return s;
-}
-
-inline bool EqualIgnoreCaseTrimmed(std::string_view a, std::string_view b) {
-    a = TrimWhitespace(a);
-    b = TrimWhitespace(b);
-    if (a.size() != b.size()) return false;
-    for (size_t i = 0; i < a.size(); ++i) {
-        if (std::tolower(static_cast<unsigned char>(a[i])) !=
-            std::tolower(static_cast<unsigned char>(b[i]))) {
-            return false;
-        }
-    }
-    return true;
-}
 
 int GetDayOfWeek(int y, int m, int d) {
     static const int t[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
@@ -3985,14 +3936,49 @@ static void PopulateItemsControl(const std::vector<calendar::AgendaItemViewModel
 
             std::string urlCopy = item.join_url;
             joinBtn.Click([urlCopy](wf::IInspectable const&, wux::RoutedEventArgs const&) {
-                std::string sanitized;
-                if (calendar::UrlSanitizer::SanitizeAndValidateUrl(urlCopy, &sanitized)) {
-                    int wlen = MultiByteToWideChar(CP_UTF8, 0, sanitized.c_str(), -1, nullptr, 0);
-                    if (wlen > 0) {
-                        std::wstring wurl(wlen, L'\0');
-                        MultiByteToWideChar(CP_UTF8, 0, sanitized.c_str(), -1, wurl.data(), wlen);
-                        ShellExecuteW(nullptr, L"open", wurl.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                Wh_Log(L"[JOIN] Join button clicked for URL: %S", urlCopy.c_str());
+                std::string targetUrl;
+                if (!calendar::UrlSanitizer::SanitizeAndValidateUrl(urlCopy, &targetUrl)) {
+                    targetUrl = urlCopy;
+                }
+                if (targetUrl.empty()) {
+                    Wh_Log(L"[JOIN] Target URL is empty");
+                    return;
+                }
+
+                try {
+                    winrt::hstring webHStr = winrt::to_hstring(targetUrl);
+                    winrt::Windows::Foundation::Uri webUri(webHStr);
+
+                    // If it's a Teams web link, construct msteams: protocol with web fallback
+                    size_t meetupPos = targetUrl.find("/l/meetup-join/");
+                    if (meetupPos != std::string::npos && !targetUrl.starts_with("msteams:")) {
+                        std::string msteamsUrl = "msteams:" + targetUrl.substr(meetupPos);
+                        winrt::hstring teamsHStr = winrt::to_hstring(msteamsUrl);
+                        winrt::Windows::Foundation::Uri teamsUri(teamsHStr);
+
+                        winrt::Windows::System::LauncherOptions options;
+                        options.FallbackUri(webUri);
+                        winrt::Windows::System::Launcher::LaunchUriAsync(teamsUri, options);
+                        Wh_Log(L"[JOIN] Launched via msteams: with web fallback");
+                    } else {
+                        winrt::Windows::System::Launcher::LaunchUriAsync(webUri);
+                        Wh_Log(L"[JOIN] Launched via LaunchUriAsync: %s", webHStr.c_str());
                     }
+                    return;
+                } catch (winrt::hresult_error const& ex) {
+                    Wh_Log(L"[JOIN] LaunchUriAsync exception: 0x%08X", (DWORD)ex.code());
+                } catch (...) {
+                    Wh_Log(L"[JOIN] Non-WinRT exception in LaunchUriAsync");
+                }
+
+                // Fallback to ShellExecuteW
+                int wlen = MultiByteToWideChar(CP_UTF8, 0, targetUrl.c_str(), -1, nullptr, 0);
+                if (wlen > 1) {
+                    std::wstring wurl(wlen - 1, L'\0');
+                    MultiByteToWideChar(CP_UTF8, 0, targetUrl.c_str(), -1, wurl.data(), wlen);
+                    HINSTANCE hInst = ShellExecuteW(nullptr, L"open", wurl.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+                    Wh_Log(L"[JOIN] ShellExecuteW result: %p", hInst);
                 }
             });
 

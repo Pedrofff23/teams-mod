@@ -10,29 +10,6 @@ namespace calendar {
 
 namespace {
 
-inline std::string_view TrimWhitespace(std::string_view s) {
-    while (!s.empty() && (s.front() == ' ' || s.front() == '\t' || s.front() == '\r' || s.front() == '\n')) {
-        s.remove_prefix(1);
-    }
-    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r' || s.back() == '\n')) {
-        s.remove_suffix(1);
-    }
-    return s;
-}
-
-inline bool EqualIgnoreCaseTrimmed(std::string_view a, std::string_view b) {
-    a = TrimWhitespace(a);
-    b = TrimWhitespace(b);
-    if (a.size() != b.size()) return false;
-    for (size_t i = 0; i < a.size(); ++i) {
-        if (std::tolower(static_cast<unsigned char>(a[i])) !=
-            std::tolower(static_cast<unsigned char>(b[i]))) {
-            return false;
-        }
-    }
-    return true;
-}
-
 int GetDayOfWeek(int y, int m, int d) {
     static const int t[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
     if (m < 3) {

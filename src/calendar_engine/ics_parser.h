@@ -5,10 +5,34 @@
 #include <vector>
 #include <optional>
 #include <cstdint>
+#include <cctype>
 #include <compare>
 #include "calendar_engine/meeting_status.h"
 
 namespace calendar {
+
+inline std::string_view TrimWhitespace(std::string_view s) {
+    while (!s.empty() && (s.front() == ' ' || s.front() == '\t' || s.front() == '\r' || s.front() == '\n')) {
+        s.remove_prefix(1);
+    }
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r' || s.back() == '\n')) {
+        s.remove_suffix(1);
+    }
+    return s;
+}
+
+inline bool EqualIgnoreCaseTrimmed(std::string_view a, std::string_view b) {
+    a = TrimWhitespace(a);
+    b = TrimWhitespace(b);
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(a[i])) !=
+            std::tolower(static_cast<unsigned char>(b[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
 
 struct CalendarDate {
     int year{0};
