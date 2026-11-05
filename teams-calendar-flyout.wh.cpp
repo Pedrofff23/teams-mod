@@ -5,6 +5,7 @@
 // @version         1.0.0
 // @author          Pedrofff23
 // @github          https://github.com/Pedrofff23/teams-mod
+// @include         explorer.exe
 // @include         ShellHost.exe
 // @include         ShellExperienceHost.exe
 // @architecture    x86-64
@@ -3298,11 +3299,25 @@ namespace wuc = winrt::Windows::UI::Core;
 
 static void DispatchUpdateEvents();
 #ifdef WH_MOD
+static void LogToFile(const wchar_t* msg) {
+    WCHAR tempPath[MAX_PATH];
+    if (GetTempPathW(MAX_PATH, tempPath) > 0) {
+        std::wstring fullPath = std::wstring(tempPath) + L"teams_calendar_flyout.log";
+        FILE* f = _wfopen(fullPath.c_str(), L"a, ccs=UTF-8");
+        if (f) {
+            fwprintf(f, L"%s\n", msg);
+            fclose(f);
+        }
+    }
+}
+
 #undef Wh_Log
 #define Wh_Log(fmt, ...) do { \
     WCHAR _dbg_buf[1024]; \
-    swprintf_s(_dbg_buf, L"[TeamsCalendar][PID:%lu][TID:%lu] " fmt L"\n", (unsigned long)GetCurrentProcessId(), (unsigned long)GetCurrentThreadId(), ##__VA_ARGS__); \
+    swprintf_s(_dbg_buf, L"[TeamsCalendar][PID:%lu][TID:%lu] " fmt, (unsigned long)GetCurrentProcessId(), (unsigned long)GetCurrentThreadId(), ##__VA_ARGS__); \
     OutputDebugStringW(_dbg_buf); \
+    OutputDebugStringW(L"\n"); \
+    LogToFile(_dbg_buf); \
     if (InternalWh_IsLogEnabled(InternalWhModPtr)) { \
         InternalWh_Log_Wrapper(L"[%d:%S]: " fmt, __LINE__, __FUNCTION__, ##__VA_ARGS__); \
     } \
@@ -4098,6 +4113,16 @@ static void WalkVisualTree(winrt::Windows::UI::Xaml::DependencyObject const& roo
     try {
         if (auto fe = root.try_as<wux::FrameworkElement>()) {
             auto name = fe.Name();
+            if (!name.empty()) {
+                std::wstring_view nameView(name);
+                if (nameView.find(L"Calendar") != std::wstring_view::npos ||
+                    nameView.find(L"Clock") != std::wstring_view::npos ||
+                    nameView.find(L"Flyout") != std::wstring_view::npos ||
+                    nameView.find(L"Focus") != std::wstring_view::npos ||
+                    nameView.find(L"Notification") != std::wstring_view::npos) {
+                    Wh_Log(L"[XAML] Relevant named element: %s (Type: %s)", name.c_str(), winrt::get_class_name(fe).c_str());
+                }
+            }
             if (name == L"CalendarControlScrollViewer") {
                 if (auto scrollViewer = fe.try_as<wuxc::ScrollViewer>()) {
                     Wh_Log(L"[XAML] CalendarControlScrollViewer found: %p", winrt::get_abi(scrollViewer));
@@ -4105,6 +4130,24 @@ static void WalkVisualTree(winrt::Windows::UI::Xaml::DependencyObject const& roo
                         ReplaceCalendarContent(scrollViewer);
                     }
                     return;
+                }
+            }
+
+            // Dual discovery: detect native CalendarView and walk up to find its parent ScrollViewer
+            if (auto cal = fe.try_as<wuxc::CalendarView>()) {
+                if (cal != m_calendarView && name != L"CustomCalendarView") {
+                    Wh_Log(L"[XAML] Native CalendarView found: %p (Name: %s)", winrt::get_abi(cal), name.c_str());
+                    wux::DependencyObject current = wuxm::VisualTreeHelper::GetParent(cal);
+                    while (current) {
+                        if (auto sv = current.try_as<wuxc::ScrollViewer>()) {
+                            Wh_Log(L"[XAML] Found ancestor ScrollViewer for CalendarView: %p (Name: %s)", winrt::get_abi(sv), sv.Name().c_str());
+                            if (sv != m_hostScrollViewer || sv.Content() != m_rootGrid) {
+                                ReplaceCalendarContent(sv);
+                            }
+                            return;
+                        }
+                        current = wuxm::VisualTreeHelper::GetParent(current);
+                    }
                 }
             }
         }
@@ -4378,10 +4421,7 @@ static bool RunFromWindowThread(HWND hWnd,
     struct RUN_FROM_WINDOW_THREAD_PARAM {
         RunFromWindowThreadProc_t proc;
         PVOID procParam;
-        bool executed;
     };
-
-    RUN_FROM_WINDOW_THREAD_PARAM param{proc, procParam, false};
 
     HHOOK hook = SetWindowsHookEx(
         WH_CALLWNDPROC,
@@ -4389,10 +4429,10 @@ static bool RunFromWindowThread(HWND hWnd,
             if (nCode == HC_ACTION) {
                 const CWPSTRUCT* cwp = (const CWPSTRUCT*)lParam;
                 if (cwp->message == runFromWindowThreadRegisteredMsg) {
-                    auto* param = (RUN_FROM_WINDOW_THREAD_PARAM*)cwp->lParam;
+                    RUN_FROM_WINDOW_THREAD_PARAM* param =
+                        (RUN_FROM_WINDOW_THREAD_PARAM*)cwp->lParam;
                     if (param) {
                         param->proc(param->procParam);
-                        param->executed = true;
                     }
                 }
             }
@@ -4400,18 +4440,17 @@ static bool RunFromWindowThread(HWND hWnd,
         },
         nullptr, dwThreadId);
 
-    if (hook) {
-        DWORD_PTR dwResult = 0;
-        SendMessageTimeoutW(hWnd, runFromWindowThreadRegisteredMsg, 0, (LPARAM)&param, SMTO_NORMAL, 2000, &dwResult);
-        UnhookWindowsHookEx(hook);
-        if (param.executed) {
-            return true;
-        }
+    if (!hook) {
+        return false;
     }
 
-    // Fallback to PostMessage if SendMessage did not execute
-    Wh_Log(L"[WINDOW] RunFromWindowThread: SendMessage fallback to PostMessage");
-    return RunFromWindowThreadViaPostMessage(hWnd, proc, procParam);
+    RUN_FROM_WINDOW_THREAD_PARAM param;
+    param.proc = proc;
+    param.procParam = procParam;
+    SendMessage(hWnd, runFromWindowThreadRegisteredMsg, 0, (LPARAM)&param);
+
+    UnhookWindowsHookEx(hook);
+    return true;
 }
 
 static std::vector<HWND> GetCoreWnds() {
@@ -4510,15 +4549,22 @@ static void OnWindowCreated(HWND hWnd, LPCWSTR lpClassName, const wchar_t* calle
         }
     }
     if (isCoreWindow) {
+        DWORD dwThreadId = GetWindowThreadProcessId(hWnd, nullptr);
         Wh_Log(L"[WINDOW] CoreWindow detectado via %s (HWND: %08X, TID: %lu)",
                caller ? caller : L"unknown",
                (DWORD)(ULONG_PTR)hWnd,
-               GetWindowThreadProcessId(hWnd, nullptr));
-        Wh_Log(L"[WINDOW] Inicializacao enviada para a thread da janela");
-        RunFromWindowThreadViaPostMessage(hWnd, [](PVOID) {
+               dwThreadId);
+        if (dwThreadId == GetCurrentThreadId()) {
+            Wh_Log(L"[WINDOW] Inicializacao direta na thread criadora");
             RegisterCoreWindowEvents();
             OnCalendarOpened();
-        }, nullptr);
+        } else {
+            Wh_Log(L"[WINDOW] Inicializacao enviada para a thread da janela");
+            RunFromWindowThread(hWnd, [](PVOID) {
+                RegisterCoreWindowEvents();
+                OnCalendarOpened();
+            }, nullptr);
+        }
     }
 }
 
