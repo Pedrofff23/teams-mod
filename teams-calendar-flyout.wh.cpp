@@ -953,6 +953,29 @@ namespace calendar {
 
 namespace {
 
+inline std::string_view TrimWhitespace(std::string_view s) {
+    while (!s.empty() && (s.front() == ' ' || s.front() == '\t' || s.front() == '\r' || s.front() == '\n')) {
+        s.remove_prefix(1);
+    }
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r' || s.back() == '\n')) {
+        s.remove_suffix(1);
+    }
+    return s;
+}
+
+inline bool EqualIgnoreCaseTrimmed(std::string_view a, std::string_view b) {
+    a = TrimWhitespace(a);
+    b = TrimWhitespace(b);
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(a[i])) !=
+            std::tolower(static_cast<unsigned char>(b[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
 // Howard Hinnant's civil date to days since 1970-01-01
 int64_t DaysFromCivil(int y, unsigned m, unsigned d) noexcept {
     y -= m <= 2;
@@ -1786,9 +1809,23 @@ std::vector<CalendarEvent> IcsParser::GetEventsForDate(
     const CalendarDate& date) const {
 
     std::vector<CalendarEvent> matched;
+    std::unordered_map<std::string, size_t> uid_map;
+
     for (const auto& ev : events) {
         if (ev.occurs_on(date)) {
-            matched.push_back(ev.rrule.is_recurring() ? ev.generate_instance_for_date(date) : ev);
+            CalendarEvent inst = ev.rrule.is_recurring() ? ev.generate_instance_for_date(date) : ev;
+            if (!ev.uid.empty()) {
+                auto it = uid_map.find(ev.uid);
+                if (it != uid_map.end()) {
+                    // Prefer non-recurring (specific instance) over recurring series master
+                    if (matched[it->second].rrule.is_recurring() && !ev.rrule.is_recurring()) {
+                        matched[it->second] = inst;
+                    }
+                    continue;
+                }
+                uid_map[ev.uid] = matched.size();
+            }
+            matched.push_back(std::move(inst));
         }
     }
 
@@ -1816,7 +1853,34 @@ std::vector<CalendarEvent> IcsParser::GetEventsForDate(
         return a.uid < b.uid;
     });
 
-    return matched;
+    // Deduplicate by time & summary or identical teams link
+    std::vector<CalendarEvent> deduped;
+    for (auto& ev : matched) {
+        bool duplicate = false;
+        for (auto& existing : deduped) {
+            bool same_time = (existing.start_time == ev.start_time && existing.end_time == ev.end_time);
+            bool same_summary = EqualIgnoreCaseTrimmed(existing.summary, ev.summary);
+            bool same_join = (!ev.teams_join_url.empty() && existing.teams_join_url == ev.teams_join_url);
+
+            if ((same_time && same_summary) || (same_time && same_join)) {
+                // Merge useful fields
+                if (existing.teams_join_url.empty() && !ev.teams_join_url.empty()) {
+                    existing.teams_join_url = ev.teams_join_url;
+                    existing.is_teams_meeting = true;
+                }
+                if (existing.location.empty() && !ev.location.empty()) {
+                    existing.location = ev.location;
+                }
+                duplicate = true;
+                break;
+            }
+        }
+        if (!duplicate) {
+            deduped.push_back(std::move(ev));
+        }
+    }
+
+    return deduped;
 }
 
 int IcsParser::GetLocalTimezoneOffsetMinutes() const {
@@ -2258,8 +2322,38 @@ void ModSettings::LoadFromWindhawk() {
 
 // --- Source: src/mod/calendar_cache.cpp ---
 #include <algorithm>
+#include <cctype>
+#include <string_view>
+#include <unordered_map>
 
 namespace calendar {
+
+namespace {
+
+inline std::string_view TrimWhitespace(std::string_view s) {
+    while (!s.empty() && (s.front() == ' ' || s.front() == '\t' || s.front() == '\r' || s.front() == '\n')) {
+        s.remove_prefix(1);
+    }
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r' || s.back() == '\n')) {
+        s.remove_suffix(1);
+    }
+    return s;
+}
+
+inline bool EqualIgnoreCaseTrimmed(std::string_view a, std::string_view b) {
+    a = TrimWhitespace(a);
+    b = TrimWhitespace(b);
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(a[i])) !=
+            std::tolower(static_cast<unsigned char>(b[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
 
 std::string_view to_string(FetchStatus status) {
     switch (status) {
@@ -2312,8 +2406,8 @@ std::vector<CalendarEvent> CalendarCache::GetEventsSnapshot() const {
 
 std::vector<CalendarEvent> CalendarCache::GetEventsForDate(const CalendarDate& target_date, bool show_past_events) const {
     std::shared_lock<std::shared_mutex> lock(mutex_);
-    std::vector<CalendarEvent> result;
-    result.reserve(events_.size());
+    std::vector<CalendarEvent> matched;
+    std::unordered_map<std::string, size_t> uid_map;
 
     for (const auto& ev : events_) {
         if (!ev.occurs_on(target_date)) {
@@ -2323,10 +2417,68 @@ std::vector<CalendarEvent> CalendarCache::GetEventsForDate(const CalendarDate& t
         if (!show_past_events && instance.temporal_status == MeetingTemporalStatus::Past) {
             continue;
         }
-        result.push_back(std::move(instance));
+
+        if (!ev.uid.empty()) {
+            auto it = uid_map.find(ev.uid);
+            if (it != uid_map.end()) {
+                // If existing is recurring series master and new instance is an explicit instance/exception, prefer explicit instance
+                if (matched[it->second].rrule.is_recurring() && !ev.rrule.is_recurring()) {
+                    matched[it->second] = std::move(instance);
+                } else {
+                    if (matched[it->second].teams_join_url.empty() && !instance.teams_join_url.empty()) {
+                        matched[it->second].teams_join_url = instance.teams_join_url;
+                        matched[it->second].is_teams_meeting = true;
+                    }
+                    if (matched[it->second].location.empty() && !instance.location.empty()) {
+                        matched[it->second].location = instance.location;
+                    }
+                }
+                continue;
+            }
+            uid_map[ev.uid] = matched.size();
+        }
+        matched.push_back(std::move(instance));
     }
 
-    return result;
+    // Sort chronologically
+    std::sort(matched.begin(), matched.end(), [](const CalendarEvent& a, const CalendarEvent& b) {
+        if (a.start_time != b.start_time) {
+            return a.start_time < b.start_time;
+        }
+        if (a.end_time != b.end_time) {
+            return a.end_time < b.end_time;
+        }
+        return a.uid < b.uid;
+    });
+
+    // Deduplicate by (start_time, end_time, summary / join_url)
+    std::vector<CalendarEvent> deduped;
+    deduped.reserve(matched.size());
+    for (auto& ev : matched) {
+        bool duplicate = false;
+        for (auto& existing : deduped) {
+            bool same_time = (existing.start_time == ev.start_time && existing.end_time == ev.end_time);
+            bool same_summary = EqualIgnoreCaseTrimmed(existing.summary, ev.summary);
+            bool same_join = (!ev.teams_join_url.empty() && existing.teams_join_url == ev.teams_join_url);
+
+            if ((same_time && same_summary) || (same_time && same_join)) {
+                if (existing.teams_join_url.empty() && !ev.teams_join_url.empty()) {
+                    existing.teams_join_url = ev.teams_join_url;
+                    existing.is_teams_meeting = true;
+                }
+                if (existing.location.empty() && !ev.location.empty()) {
+                    existing.location = ev.location;
+                }
+                duplicate = true;
+                break;
+            }
+        }
+        if (!duplicate) {
+            deduped.push_back(std::move(ev));
+        }
+    }
+
+    return deduped;
 }
 
 FetchStatus CalendarCache::GetStatus() const {
@@ -2617,12 +2769,37 @@ void HttpFetcher::WorkerLoop() {
 
 // --- Source: src/ui/agenda_view_model.cpp ---
 #include <cstdio>
+#include <cctype>
 #include <algorithm>
 #include <array>
+#include <string_view>
 
 namespace calendar {
 
 namespace {
+
+inline std::string_view TrimWhitespace(std::string_view s) {
+    while (!s.empty() && (s.front() == ' ' || s.front() == '\t' || s.front() == '\r' || s.front() == '\n')) {
+        s.remove_prefix(1);
+    }
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r' || s.back() == '\n')) {
+        s.remove_suffix(1);
+    }
+    return s;
+}
+
+inline bool EqualIgnoreCaseTrimmed(std::string_view a, std::string_view b) {
+    a = TrimWhitespace(a);
+    b = TrimWhitespace(b);
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(a[i])) !=
+            std::tolower(static_cast<unsigned char>(b[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
 
 int GetDayOfWeek(int y, int m, int d) {
     static const int t[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
@@ -2841,7 +3018,35 @@ AgendaDayViewModel AgendaPresenter::PresentEvents(
         return a.title < b.title;
     });
 
-    day_vm.items = std::move(vms);
+    // Deduplicate identical occurrences / duplicate invites
+    std::vector<AgendaItemViewModel> deduped_vms;
+    deduped_vms.reserve(vms.size());
+    for (auto& vm : vms) {
+        bool duplicate = false;
+        for (auto& existing : deduped_vms) {
+            bool same_time = (existing.start_unix == vm.start_unix && existing.end_unix == vm.end_unix && existing.is_all_day == vm.is_all_day);
+            bool same_uid = (!vm.uid.empty() && existing.uid == vm.uid);
+            bool same_summary = EqualIgnoreCaseTrimmed(existing.title, vm.title);
+            bool same_join = (!vm.join_url.empty() && existing.join_url == vm.join_url);
+
+            if (same_uid || (same_time && same_summary) || (same_time && same_join)) {
+                if (!existing.is_teams && vm.is_teams) {
+                    existing.is_teams = true;
+                    existing.join_url = vm.join_url;
+                }
+                if (existing.location.empty() && !vm.location.empty()) {
+                    existing.location = vm.location;
+                }
+                duplicate = true;
+                break;
+            }
+        }
+        if (!duplicate) {
+            deduped_vms.push_back(std::move(vm));
+        }
+    }
+
+    day_vm.items = std::move(deduped_vms);
     return day_vm;
 }
 
@@ -3605,6 +3810,12 @@ static void PopulateItemsControl(const std::vector<calendar::AgendaItemViewModel
     if (!m_itemsControl) return;
     m_itemsControl.Items().Clear();
 
+    if (m_eventsScrollViewer) {
+        try {
+            m_eventsScrollViewer.ChangeView(nullptr, winrt::box_value(0.0).as<winrt::Windows::Foundation::IReference<double>>(), nullptr, true);
+        } catch (...) {}
+    }
+
     bool dark = IsDarkTheme(m_rootGrid);
 
     if (items.empty()) {
@@ -3723,7 +3934,7 @@ static void PopulateItemsControl(const std::vector<calendar::AgendaItemViewModel
 
         // Title
         auto titleTb = wuxc::TextBlock();
-        titleTb.Text(winrt::to_hstring(item.title));
+        titleTb.Text(item.title.empty() ? L"(No title)" : winrt::to_hstring(item.title));
         titleTb.FontSize(13.0);
         titleTb.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
         titleTb.TextWrapping(wux::TextWrapping::Wrap);
@@ -3851,6 +4062,11 @@ static void ChangeSelectedDay(int deltaDays) {
     }
 
     RefreshAgendaList();
+    if (m_eventsScrollViewer) {
+        try {
+            m_eventsScrollViewer.ChangeView(nullptr, winrt::box_value(0.0).as<winrt::Windows::Foundation::IReference<double>>(), nullptr, true);
+        } catch (...) {}
+    }
 }
 
 static void OnCalendarViewSelectedDatesChanged(winrt::Windows::Foundation::DateTime dt) {
@@ -3864,6 +4080,11 @@ static void OnCalendarViewSelectedDatesChanged(winrt::Windows::Foundation::DateT
         m_dateButtonText.Text(winrt::hstring(FormatFilterDate(m_currentFilterDate)));
     }
     RefreshAgendaList();
+    if (m_eventsScrollViewer) {
+        try {
+            m_eventsScrollViewer.ChangeView(nullptr, winrt::box_value(0.0).as<winrt::Windows::Foundation::IReference<double>>(), nullptr, true);
+        } catch (...) {}
+    }
 }
 
 static void ResetDatePickerToToday() {
@@ -3882,6 +4103,11 @@ static void ResetDatePickerToToday() {
         } catch (...) {}
     }
     RefreshAgendaList();
+    if (m_eventsScrollViewer) {
+        try {
+            m_eventsScrollViewer.ChangeView(nullptr, winrt::box_value(0.0).as<winrt::Windows::Foundation::IReference<double>>(), nullptr, true);
+        } catch (...) {}
+    }
 }
 
 static void ReplaceCalendarContent(wuxc::ScrollViewer const& host) {

@@ -420,6 +420,12 @@ static void PopulateItemsControl(const std::vector<calendar::AgendaItemViewModel
     if (!m_itemsControl) return;
     m_itemsControl.Items().Clear();
 
+    if (m_eventsScrollViewer) {
+        try {
+            m_eventsScrollViewer.ChangeView(nullptr, winrt::box_value(0.0).as<winrt::Windows::Foundation::IReference<double>>(), nullptr, true);
+        } catch (...) {}
+    }
+
     bool dark = IsDarkTheme(m_rootGrid);
 
     if (items.empty()) {
@@ -538,7 +544,7 @@ static void PopulateItemsControl(const std::vector<calendar::AgendaItemViewModel
 
         // Title
         auto titleTb = wuxc::TextBlock();
-        titleTb.Text(winrt::to_hstring(item.title));
+        titleTb.Text(item.title.empty() ? L"(No title)" : winrt::to_hstring(item.title));
         titleTb.FontSize(13.0);
         titleTb.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
         titleTb.TextWrapping(wux::TextWrapping::Wrap);
@@ -666,6 +672,11 @@ static void ChangeSelectedDay(int deltaDays) {
     }
 
     RefreshAgendaList();
+    if (m_eventsScrollViewer) {
+        try {
+            m_eventsScrollViewer.ChangeView(nullptr, winrt::box_value(0.0).as<winrt::Windows::Foundation::IReference<double>>(), nullptr, true);
+        } catch (...) {}
+    }
 }
 
 static void OnCalendarViewSelectedDatesChanged(winrt::Windows::Foundation::DateTime dt) {
@@ -679,6 +690,11 @@ static void OnCalendarViewSelectedDatesChanged(winrt::Windows::Foundation::DateT
         m_dateButtonText.Text(winrt::hstring(FormatFilterDate(m_currentFilterDate)));
     }
     RefreshAgendaList();
+    if (m_eventsScrollViewer) {
+        try {
+            m_eventsScrollViewer.ChangeView(nullptr, winrt::box_value(0.0).as<winrt::Windows::Foundation::IReference<double>>(), nullptr, true);
+        } catch (...) {}
+    }
 }
 
 static void ResetDatePickerToToday() {
@@ -697,6 +713,11 @@ static void ResetDatePickerToToday() {
         } catch (...) {}
     }
     RefreshAgendaList();
+    if (m_eventsScrollViewer) {
+        try {
+            m_eventsScrollViewer.ChangeView(nullptr, winrt::box_value(0.0).as<winrt::Windows::Foundation::IReference<double>>(), nullptr, true);
+        } catch (...) {}
+    }
 }
 
 static void ReplaceCalendarContent(wuxc::ScrollViewer const& host) {

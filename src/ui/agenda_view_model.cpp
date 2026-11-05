@@ -1,12 +1,37 @@
 #include "ui/agenda_view_model.h"
 #include "mod/calendar_cache.h"
 #include <cstdio>
+#include <cctype>
 #include <algorithm>
 #include <array>
+#include <string_view>
 
 namespace calendar {
 
 namespace {
+
+inline std::string_view TrimWhitespace(std::string_view s) {
+    while (!s.empty() && (s.front() == ' ' || s.front() == '\t' || s.front() == '\r' || s.front() == '\n')) {
+        s.remove_prefix(1);
+    }
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r' || s.back() == '\n')) {
+        s.remove_suffix(1);
+    }
+    return s;
+}
+
+inline bool EqualIgnoreCaseTrimmed(std::string_view a, std::string_view b) {
+    a = TrimWhitespace(a);
+    b = TrimWhitespace(b);
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(a[i])) !=
+            std::tolower(static_cast<unsigned char>(b[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
 
 int GetDayOfWeek(int y, int m, int d) {
     static const int t[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
@@ -225,7 +250,35 @@ AgendaDayViewModel AgendaPresenter::PresentEvents(
         return a.title < b.title;
     });
 
-    day_vm.items = std::move(vms);
+    // Deduplicate identical occurrences / duplicate invites
+    std::vector<AgendaItemViewModel> deduped_vms;
+    deduped_vms.reserve(vms.size());
+    for (auto& vm : vms) {
+        bool duplicate = false;
+        for (auto& existing : deduped_vms) {
+            bool same_time = (existing.start_unix == vm.start_unix && existing.end_unix == vm.end_unix && existing.is_all_day == vm.is_all_day);
+            bool same_uid = (!vm.uid.empty() && existing.uid == vm.uid);
+            bool same_summary = EqualIgnoreCaseTrimmed(existing.title, vm.title);
+            bool same_join = (!vm.join_url.empty() && existing.join_url == vm.join_url);
+
+            if (same_uid || (same_time && same_summary) || (same_time && same_join)) {
+                if (!existing.is_teams && vm.is_teams) {
+                    existing.is_teams = true;
+                    existing.join_url = vm.join_url;
+                }
+                if (existing.location.empty() && !vm.location.empty()) {
+                    existing.location = vm.location;
+                }
+                duplicate = true;
+                break;
+            }
+        }
+        if (!duplicate) {
+            deduped_vms.push_back(std::move(vm));
+        }
+    }
+
+    day_vm.items = std::move(deduped_vms);
     return day_vm;
 }
 

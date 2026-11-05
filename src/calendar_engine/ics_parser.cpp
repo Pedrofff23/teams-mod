@@ -17,6 +17,29 @@ namespace calendar {
 
 namespace {
 
+inline std::string_view TrimWhitespace(std::string_view s) {
+    while (!s.empty() && (s.front() == ' ' || s.front() == '\t' || s.front() == '\r' || s.front() == '\n')) {
+        s.remove_prefix(1);
+    }
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r' || s.back() == '\n')) {
+        s.remove_suffix(1);
+    }
+    return s;
+}
+
+inline bool EqualIgnoreCaseTrimmed(std::string_view a, std::string_view b) {
+    a = TrimWhitespace(a);
+    b = TrimWhitespace(b);
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(a[i])) !=
+            std::tolower(static_cast<unsigned char>(b[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
 // Howard Hinnant's civil date to days since 1970-01-01
 int64_t DaysFromCivil(int y, unsigned m, unsigned d) noexcept {
     y -= m <= 2;
@@ -850,9 +873,23 @@ std::vector<CalendarEvent> IcsParser::GetEventsForDate(
     const CalendarDate& date) const {
 
     std::vector<CalendarEvent> matched;
+    std::unordered_map<std::string, size_t> uid_map;
+
     for (const auto& ev : events) {
         if (ev.occurs_on(date)) {
-            matched.push_back(ev.rrule.is_recurring() ? ev.generate_instance_for_date(date) : ev);
+            CalendarEvent inst = ev.rrule.is_recurring() ? ev.generate_instance_for_date(date) : ev;
+            if (!ev.uid.empty()) {
+                auto it = uid_map.find(ev.uid);
+                if (it != uid_map.end()) {
+                    // Prefer non-recurring (specific instance) over recurring series master
+                    if (matched[it->second].rrule.is_recurring() && !ev.rrule.is_recurring()) {
+                        matched[it->second] = inst;
+                    }
+                    continue;
+                }
+                uid_map[ev.uid] = matched.size();
+            }
+            matched.push_back(std::move(inst));
         }
     }
 
@@ -880,7 +917,34 @@ std::vector<CalendarEvent> IcsParser::GetEventsForDate(
         return a.uid < b.uid;
     });
 
-    return matched;
+    // Deduplicate by time & summary or identical teams link
+    std::vector<CalendarEvent> deduped;
+    for (auto& ev : matched) {
+        bool duplicate = false;
+        for (auto& existing : deduped) {
+            bool same_time = (existing.start_time == ev.start_time && existing.end_time == ev.end_time);
+            bool same_summary = EqualIgnoreCaseTrimmed(existing.summary, ev.summary);
+            bool same_join = (!ev.teams_join_url.empty() && existing.teams_join_url == ev.teams_join_url);
+
+            if ((same_time && same_summary) || (same_time && same_join)) {
+                // Merge useful fields
+                if (existing.teams_join_url.empty() && !ev.teams_join_url.empty()) {
+                    existing.teams_join_url = ev.teams_join_url;
+                    existing.is_teams_meeting = true;
+                }
+                if (existing.location.empty() && !ev.location.empty()) {
+                    existing.location = ev.location;
+                }
+                duplicate = true;
+                break;
+            }
+        }
+        if (!duplicate) {
+            deduped.push_back(std::move(ev));
+        }
+    }
+
+    return deduped;
 }
 
 int IcsParser::GetLocalTimezoneOffsetMinutes() const {

@@ -229,6 +229,29 @@ bool TestAgendaPresenterEmptyStateAndSorting() {
         TEST_ASSERT(item.title != "Morning Triage", "Morning Triage should have been excluded");
     }
 
+    // Test 4: Deduplicate identical meetings (e.g. duplicate series or dual invites)
+    CalendarEvent dup1;
+    dup1.uid = "dup-1";
+    dup1.summary = "[GRUPO NRV] Fórum de IA";
+    dup1.start_time = CalendarDateTime{selected_date, CalendarTime{11, 0, 0}, true};
+    dup1.end_time = CalendarDateTime{selected_date, CalendarTime{12, 0, 0}, true};
+    dup1.is_teams_meeting = true;
+    dup1.teams_join_url = "https://teams.microsoft.com/l/meetup-join/123";
+
+    CalendarEvent dup2;
+    dup2.uid = "dup-2";
+    dup2.summary = "[GRUPO NRV] Fórum de IA ";
+    dup2.start_time = CalendarDateTime{selected_date, CalendarTime{11, 0, 0}, true};
+    dup2.end_time = CalendarDateTime{selected_date, CalendarTime{12, 0, 0}, true};
+    dup2.is_teams_meeting = true;
+    dup2.teams_join_url = "https://teams.microsoft.com/l/meetup-join/123";
+
+    std::vector<CalendarEvent> dups = {dup1, dup2};
+    AgendaDayViewModel dedup_vm = AgendaPresenter::PresentEvents(
+        dups, selected_date, ThemeMode::Dark, ref_time, true, true
+    );
+    TEST_ASSERT(dedup_vm.items.size() == 1, "Duplicate meetings must be merged into 1 item in AgendaPresenter");
+
     return true;
 }
 

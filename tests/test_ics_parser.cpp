@@ -494,6 +494,50 @@ bool TestRecurrenceRuleExpansion() {
     return true;
 }
 
+bool TestEventDeduplication() {
+    std::cout << "Running TestEventDeduplication..." << std::endl;
+
+    std::string feed =
+        "BEGIN:VCALENDAR\r\n"
+        "VERSION:2.0\r\n"
+        "PRODID:-//Microsoft Corporation//Outlook 16.0 MIMEDIR//EN\r\n"
+        "BEGIN:VEVENT\r\n"
+        "UID:forum-ia-master\r\n"
+        "DTSTART:20261106T140000Z\r\n"
+        "DTEND:20261106T150000Z\r\n"
+        "RRULE:FREQ=WEEKLY;BYDAY=FR\r\n"
+        "SUMMARY:[GRUPO NRV] Fórum de IA\r\n"
+        "DESCRIPTION:Reuniões do Microsoft Teams\r\n"
+        "END:VEVENT\r\n"
+        "BEGIN:VEVENT\r\n"
+        "UID:forum-ia-master\r\n"
+        "DTSTART:20261106T140000Z\r\n"
+        "DTEND:20261106T150000Z\r\n"
+        "SUMMARY:[GRUPO NRV] Fórum de IA\r\n"
+        "LOCATION:Teams Online\r\n"
+        "DESCRIPTION:https://teams.microsoft.com/l/meetup-join/19%3ameeting_xyz\r\n"
+        "END:VEVENT\r\n"
+        "BEGIN:VEVENT\r\n"
+        "UID:forum-ia-duplicate-group\r\n"
+        "DTSTART:20261106T140000Z\r\n"
+        "DTEND:20261106T150000Z\r\n"
+        "SUMMARY:[GRUPO NRV] Fórum de IA\r\n"
+        "DESCRIPTION:https://teams.microsoft.com/l/meetup-join/19%3ameeting_xyz\r\n"
+        "END:VEVENT\r\n"
+        "END:VCALENDAR\r\n";
+
+    IcsParser parser;
+    auto events = parser.Parse(feed);
+    auto nov6_events = parser.GetEventsForDate(events, CalendarDate{2026, 11, 6});
+
+    TEST_ASSERT(nov6_events.size() == 1, "Duplicate meetings for Nov 6 should be merged into exactly 1 event");
+    TEST_ASSERT(nov6_events[0].summary == "[GRUPO NRV] Fórum de IA", "Summary matches");
+    TEST_ASSERT(!nov6_events[0].teams_join_url.empty(), "Teams join url preserved from merged instance");
+    TEST_ASSERT(nov6_events[0].is_teams_meeting, "Recognized as Teams meeting");
+
+    return true;
+}
+
 } // namespace
 
 int RunAllTests() {
@@ -511,9 +555,10 @@ int RunAllTests() {
     if (!TestRealWorldFeedWithEscapingAndMultiline()) return 8;
     if (!TestEdgeCasesAndRobustness()) return 9;
     if (!TestRecurrenceRuleExpansion()) return 10;
+    if (!TestEventDeduplication()) return 11;
 
     std::cout << "=========================================" << std::endl;
-    std::cout << "ALL 10 TEST SUITES PASSED SUCCESSFULLY!" << std::endl;
+    std::cout << "ALL 11 TEST SUITES PASSED SUCCESSFULLY!" << std::endl;
     std::cout << "=========================================" << std::endl;
     return 0;
 }
