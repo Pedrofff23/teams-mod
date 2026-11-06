@@ -5,7 +5,6 @@
 // @version         1.0.0
 // @author          Pedrofff23
 // @github          https://github.com/Pedrofff23/teams-mod
-// @include         explorer.exe
 // @include         ShellHost.exe
 // @include         ShellExperienceHost.exe
 // @architecture    x86-64
@@ -112,25 +111,12 @@ namespace wuc = winrt::Windows::UI::Core;
 
 static void DispatchUpdateEvents();
 #ifdef WH_MOD
-static void LogToFile(const wchar_t* msg) {
-    WCHAR tempPath[MAX_PATH];
-    if (GetTempPathW(MAX_PATH, tempPath) > 0) {
-        std::wstring fullPath = std::wstring(tempPath) + L"teams_calendar_flyout.log";
-        FILE* f = _wfopen(fullPath.c_str(), L"a, ccs=UTF-8");
-        if (f) {
-            fwprintf(f, L"%s\n", msg);
-            fclose(f);
-        }
-    }
-}
-
 #undef Wh_Log
 #define Wh_Log(fmt, ...) do { \
     WCHAR _dbg_buf[1024]; \
     swprintf_s(_dbg_buf, L"[WH] [TeamsCalendar][PID:%lu][TID:%lu] " fmt, (unsigned long)GetCurrentProcessId(), (unsigned long)GetCurrentThreadId(), ##__VA_ARGS__); \
     OutputDebugStringW(_dbg_buf); \
     OutputDebugStringW(L"\n"); \
-    LogToFile(_dbg_buf); \
     if (InternalWhModPtr && InternalWh_IsLogEnabled(InternalWhModPtr)) { \
         InternalWh_Log_Wrapper(L"[%d:%S]: " fmt, __LINE__, __FUNCTION__, ##__VA_ARGS__); \
     } \
@@ -650,15 +636,26 @@ static void PopulateItemsControl(const std::vector<calendar::AgendaItemViewModel
 }
 
 static void RefreshAgendaList() {
-    calendar::CalendarDate target_date{m_currentFilterDate.wYear, m_currentFilterDate.wMonth, m_currentFilterDate.wDay};
-    auto cache = calendar::ModLifecycleManager::Instance().GetCache();
-    auto settings = calendar::ModLifecycleManager::Instance().GetSettings();
-    auto events = cache ? cache->GetEventsForDate(target_date) : std::vector<calendar::CalendarEvent>{};
-    calendar::ThemeMode theme = IsDarkTheme(m_rootGrid) ? calendar::ThemeMode::Dark : calendar::ThemeMode::Light;
-    calendar::CalendarDateTime now = calendar::CalendarDateTime::now_local();
-    auto viewModel = calendar::AgendaPresenter::PresentEvents(
-        events, target_date, theme, now, settings.show_past_events, settings.enable_join_button);
-    PopulateItemsControl(viewModel.items);
+    DWORD owner = g_ownerThreadId.load();
+    if (owner != 0 && owner != GetCurrentThreadId()) {
+        Wh_Log(L"[XAML] RefreshAgendaList ignored on non-owner thread %lu (owner: %lu)", GetCurrentThreadId(), owner);
+        return;
+    }
+    if (!m_itemsControl) return;
+
+    try {
+        calendar::CalendarDate target_date{m_currentFilterDate.wYear, m_currentFilterDate.wMonth, m_currentFilterDate.wDay};
+        auto cache = calendar::ModLifecycleManager::Instance().GetCache();
+        auto settings = calendar::ModLifecycleManager::Instance().GetSettings();
+        auto events = cache ? cache->GetEventsForDate(target_date) : std::vector<calendar::CalendarEvent>{};
+        calendar::ThemeMode theme = IsDarkTheme(m_rootGrid) ? calendar::ThemeMode::Dark : calendar::ThemeMode::Light;
+        calendar::CalendarDateTime now = calendar::CalendarDateTime::now_local();
+        auto viewModel = calendar::AgendaPresenter::PresentEvents(
+            events, target_date, theme, now, settings.show_past_events, settings.enable_join_button);
+        PopulateItemsControl(viewModel.items);
+    } catch (...) {
+        Wh_Log(L"[ERROR] Exception in RefreshAgendaList");
+    }
 }
 
 static void DispatchUpdateEvents() {
@@ -666,7 +663,9 @@ static void DispatchUpdateEvents() {
     try {
         if (auto dispatcher = g_agileDispatcher.get()) {
             dispatcher.TryRunAsync(wuc::CoreDispatcherPriority::Normal, []() {
-                RefreshAgendaList();
+                try {
+                    RefreshAgendaList();
+                } catch (...) {}
             });
         }
     } catch (...) {
@@ -765,6 +764,17 @@ static void ReplaceCalendarContent(wuxc::ScrollViewer const& host) {
         Wh_Log(L"[XAML] ReplaceCalendarContent rejeitado: thread %lu != owner %lu", currentThread, expected);
         return;
     }
+
+    try {
+        auto coreWindow = wuc::CoreWindow::GetForCurrentThread();
+        if (coreWindow) {
+            auto disp = coreWindow.Dispatcher();
+            if (disp) {
+                g_agileDispatcher = winrt::make_agile(disp);
+            }
+        }
+    } catch (...) {}
+
     RegisterCoreWindowEvents();
 
     if (m_currentFilterDate.wYear == 0) {
@@ -1122,24 +1132,23 @@ static void RegisterCoreWindowEvents() {
         }
         Wh_Log(L"[WINDOW] Registering CoreWindow Activated & VisibilityChanged for thread %u", GetCurrentThreadId());
 
-        auto disp = coreWindow.Dispatcher();
-        if (disp) {
-            g_agileDispatcher = winrt::make_agile(disp);
-        }
-
         t_coreWindowData.activatedToken = coreWindow.Activated(
             [](auto&&, wuc::WindowActivatedEventArgs const& args) {
-                if (args.WindowActivationState() != wuc::CoreWindowActivationState::Deactivated) {
-                    Wh_Log(L"[WINDOW] CoreWindow Activated (State: %d)", (int)args.WindowActivationState());
-                    OnCalendarOpened();
-                }
+                try {
+                    if (args.WindowActivationState() != wuc::CoreWindowActivationState::Deactivated) {
+                        Wh_Log(L"[WINDOW] CoreWindow Activated (State: %d)", (int)args.WindowActivationState());
+                        OnCalendarOpened();
+                    }
+                } catch (...) {}
             });
         t_coreWindowData.visibilityChangedToken = coreWindow.VisibilityChanged(
             [](auto&&, wuc::VisibilityChangedEventArgs const& args) {
-                if (args.Visible()) {
-                    Wh_Log(L"[WINDOW] CoreWindow VisibilityChanged (Visible: %d)", (int)args.Visible());
-                    OnCalendarOpened();
-                }
+                try {
+                    if (args.Visible()) {
+                        Wh_Log(L"[WINDOW] CoreWindow VisibilityChanged (Visible: %d)", (int)args.Visible());
+                        OnCalendarOpened();
+                    }
+                } catch (...) {}
             });
         t_coreWindowData.coreWindow = coreWindow;
     } catch (winrt::hresult_error const& ex) {
@@ -1251,15 +1260,15 @@ static bool RunFromWindowThreadViaPostMessage(HWND hWnd,
     HHOOK hook = SetWindowsHookEx(
         WH_GETMESSAGE,
         [](int nCode, WPARAM wParam, LPARAM lParam) -> LRESULT {
-            if (nCode == HC_ACTION) {
-                const MSG* msg = (const MSG*)lParam;
+            if (nCode == HC_ACTION && wParam == PM_REMOVE) {
+                MSG* msg = (MSG*)lParam;
                 if (msg->message == runFromWindowThreadRegisteredMsgViaPostMessage) {
                     auto* param = (RUN_FROM_WINDOW_THREAD_PARAM*)msg->lParam;
                     if (param) {
                         param->proc(param->procParam);
                         UnhookWindowsHookEx(param->hook);
                         delete param;
-                        const_cast<MSG*>(msg)->lParam = 0;
+                        msg->lParam = 0;
                     }
                 }
             }
@@ -1294,10 +1303,7 @@ static bool RunFromWindowThread(HWND hWnd,
     struct RUN_FROM_WINDOW_THREAD_PARAM {
         RunFromWindowThreadProc_t proc;
         PVOID procParam;
-        bool executed;
     };
-
-    RUN_FROM_WINDOW_THREAD_PARAM param{proc, procParam, false};
 
     HHOOK hook = SetWindowsHookEx(
         WH_CALLWNDPROC,
@@ -1306,30 +1312,20 @@ static bool RunFromWindowThread(HWND hWnd,
                 const CWPSTRUCT* cwp = (const CWPSTRUCT*)lParam;
                 if (cwp->message == runFromWindowThreadRegisteredMsg) {
                     auto* param = (RUN_FROM_WINDOW_THREAD_PARAM*)cwp->lParam;
-                    if (param) {
+                    if (param && param->proc) {
                         param->proc(param->procParam);
-                        param->executed = true;
                     }
                 }
             }
             return CallNextHookEx(nullptr, nCode, wParam, lParam);
         },
         nullptr, dwThreadId);
+    if (!hook) return false;
 
-    if (hook) {
-        DWORD_PTR dwResult = 0;
-        // Non-blocking timeout: if thread is suspended by Windows PLM, this returns in 150ms instead of deadlocking
-        if (SendMessageTimeoutW(hWnd, runFromWindowThreadRegisteredMsg, 0, (LPARAM)&param,
-                                SMTO_ABORTIFHUNG | SMTO_NORMAL, 150, &dwResult) && param.executed) {
-            UnhookWindowsHookEx(hook);
-            return true;
-        }
-        UnhookWindowsHookEx(hook);
-    }
-
-    // Thread is suspended or busy - queue via PostMessage so it executes the instant the window thread resumes
-    Wh_Log(L"[WINDOW] RunFromWindowThread: thread %lu suspended/busy, falling back to PostMessage", dwThreadId);
-    return RunFromWindowThreadViaPostMessage(hWnd, proc, procParam);
+    RUN_FROM_WINDOW_THREAD_PARAM param{proc, procParam};
+    SendMessage(hWnd, runFromWindowThreadRegisteredMsg, 0, (LPARAM)&param);
+    UnhookWindowsHookEx(hook);
+    return true;
 }
 
 static std::vector<HWND> GetCoreWnds() {
@@ -1412,47 +1408,22 @@ using CreateWindowInBandEx_t = HWND(WINAPI*)(DWORD dwExStyle,
                                              DWORD dwTypeFlags);
 static CreateWindowInBandEx_t CreateWindowInBandEx_Original = nullptr;
 
-using CreateWindowExW_t = HWND(WINAPI*)(DWORD dwExStyle,
-                                        LPCWSTR lpClassName,
-                                        LPCWSTR lpWindowName,
-                                        DWORD dwStyle,
-                                        int X,
-                                        int Y,
-                                        int nWidth,
-                                        int nHeight,
-                                        HWND hWndParent,
-                                        HMENU hMenu,
-                                        HINSTANCE hInstance,
-                                        LPVOID lpParam);
-static CreateWindowExW_t CreateWindowExW_Original = nullptr;
-
 static void OnWindowCreated(HWND hWnd, LPCWSTR lpClassName, const wchar_t* caller) {
     if (!hWnd) return;
     BOOL bTextualClassName = ((ULONG_PTR)lpClassName & ~(ULONG_PTR)0xffff) != 0;
-    bool isCoreWindow = false;
-    if (bTextualClassName) {
-        if (_wcsicmp(lpClassName, L"Windows.UI.Core.CoreWindow") == 0) {
-            isCoreWindow = true;
-        }
-    } else {
-        WCHAR szClassName[64] = {0};
-        if (GetClassNameW(hWnd, szClassName, ARRAYSIZE(szClassName)) != 0 &&
-            _wcsicmp(szClassName, L"Windows.UI.Core.CoreWindow") == 0) {
-            isCoreWindow = true;
-        }
-    }
-    if (isCoreWindow) {
-        DWORD dwThreadId = GetWindowThreadProcessId(hWnd, nullptr);
-        Wh_Log(L"[WINDOW] CoreWindow detectado via %s (HWND: %08X, TID: %lu)",
-               caller ? caller : L"unknown",
-               (DWORD)(ULONG_PTR)hWnd,
-               dwThreadId);
-        Wh_Log(L"[WINDOW] Postando inicializacao para a fila de mensagens da janela");
-        RunFromWindowThreadViaPostMessage(hWnd, [](PVOID) {
-            RegisterCoreWindowEvents();
-            OnCalendarOpened();
-        }, nullptr);
-    }
+    if (!bTextualClassName) return;
+    if (_wcsicmp(lpClassName, L"Windows.UI.Core.CoreWindow") != 0) return;
+
+    DWORD dwThreadId = GetWindowThreadProcessId(hWnd, nullptr);
+    Wh_Log(L"[WINDOW] CoreWindow detectado via %s (HWND: %08X, TID: %lu)",
+           caller ? caller : L"unknown",
+           (DWORD)(ULONG_PTR)hWnd,
+           dwThreadId);
+    Wh_Log(L"[WINDOW] Postando inicializacao para a fila de mensagens da janela");
+    RunFromWindowThreadViaPostMessage(hWnd, [](PVOID) {
+        RegisterCoreWindowEvents();
+        OnCalendarOpened();
+    }, nullptr);
 }
 
 static HWND WINAPI CreateWindowInBand_Hook(DWORD dwExStyle,
@@ -1498,26 +1469,6 @@ static HWND WINAPI CreateWindowInBandEx_Hook(DWORD dwExStyle,
     return hWnd;
 }
 
-static HWND WINAPI CreateWindowExW_Hook(DWORD dwExStyle,
-                                        LPCWSTR lpClassName,
-                                        LPCWSTR lpWindowName,
-                                        DWORD dwStyle,
-                                        int X,
-                                        int Y,
-                                        int nWidth,
-                                        int nHeight,
-                                        HWND hWndParent,
-                                        HMENU hMenu,
-                                        HINSTANCE hInstance,
-                                        LPVOID lpParam) {
-    HWND hWnd = CreateWindowExW_Original(
-        dwExStyle, lpClassName, lpWindowName, dwStyle, X, Y, nWidth, nHeight,
-        hWndParent, hMenu, hInstance, lpParam);
-    if (!hWnd) return hWnd;
-    OnWindowCreated(hWnd, lpClassName, L"CreateWindowExW");
-    return hWnd;
-}
-
 #endif // WH_MOD
 
 // Windhawk mod entry points (C++ linkage matching Windhawk's engine ABI)
@@ -1526,6 +1477,12 @@ BOOL Wh_ModInit() {
     WCHAR processName[MAX_PATH] = {0};
     GetModuleFileNameW(nullptr, processName, MAX_PATH);
     Wh_Log(L"[INIT] Target process: %s (PID: %lu)", processName, GetCurrentProcessId());
+
+    // Defense-in-depth: Never run in explorer.exe (the calendar flyout is hosted by ShellExperienceHost / ShellHost)
+    if (wcsstr(processName, L"explorer.exe") != nullptr || wcsstr(processName, L"Explorer.EXE") != nullptr) {
+        Wh_Log(L"[INIT] Explorer process ignored (calendar flyout is hosted by ShellExperienceHost/ShellHost)");
+        return FALSE;
+    }
 
 #ifdef WH_MOD
     HMODULE user32Module = GetModuleHandleW(L"user32.dll");
@@ -1551,17 +1508,6 @@ BOOL Wh_ModInit() {
             }
         } else {
             Wh_Log(L"[HOOK] CreateWindowInBandEx nao encontrado");
-        }
-        auto pCreateWindowExW = (CreateWindowExW_t)GetProcAddress(user32Module, "CreateWindowExW");
-        if (pCreateWindowExW) {
-            Wh_Log(L"[HOOK] CreateWindowExW encontrado");
-            if (WindhawkUtils::SetFunctionHook(pCreateWindowExW, CreateWindowExW_Hook, &CreateWindowExW_Original)) {
-                Wh_Log(L"[HOOK] Hook instalado em CreateWindowExW");
-            } else {
-                Wh_Log(L"[ERROR] Falha ao instalar hook em CreateWindowExW: %lu", GetLastError());
-            }
-        } else {
-            Wh_Log(L"[HOOK] CreateWindowExW nao encontrado");
         }
     }
 #endif
@@ -1593,29 +1539,31 @@ void Wh_ModSettingsChanged() {
     Wh_Log(L"[CONFIG] Wh_ModSettingsChanged executado");
     calendar::ModLifecycleManager::Instance().OnSettingsChanged();
 #ifdef WH_MOD
-    if (g_agileDispatcher) {
-        if (auto disp = g_agileDispatcher.get()) {
-            disp.TryRunAsync(wuc::CoreDispatcherPriority::Normal, []() {
-                RefreshAgendaList();
-            });
-        }
-    }
+    DispatchUpdateEvents();
 #endif
 }
 
 void Wh_ModUninit() {
     Wh_Log(L"[LIFECYCLE] Wh_ModUninit executado");
 #ifdef WH_MOD
+    DWORD ownerThread = g_ownerThreadId.load();
     for (HWND hCoreWnd : GetCoreWnds()) {
-        Wh_Log(L"[LIFECYCLE] Restaurando janela: %08X", (DWORD)(ULONG_PTR)hCoreWnd);
+        DWORD wndThread = GetWindowThreadProcessId(hCoreWnd, nullptr);
+        Wh_Log(L"[LIFECYCLE] Processando janela: %08X (TID: %lu)", (DWORD)(ULONG_PTR)hCoreWnd, wndThread);
         RunFromWindowThread(
             hCoreWnd,
-            [](PVOID) {
+            [](PVOID pOwner) {
+                DWORD owner = *(DWORD*)pOwner;
                 RevokeLayoutUpdated();
                 UnregisterCoreWindowEvents();
-                RestoreCalendarContent();
+                if (owner != 0 && GetCurrentThreadId() == owner) {
+                    RestoreCalendarContent();
+                }
             },
-            nullptr);
+            &ownerThread);
+    }
+    if (g_ownerThreadId.load() != 0) {
+        RestoreCalendarContent();
     }
 #endif
     calendar::ModLifecycleManager::Instance().Uninitialize();
