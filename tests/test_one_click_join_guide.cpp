@@ -225,6 +225,13 @@ bool TestSelfContainedModBundle() {
     TEST_ASSERT(mod_src.find("Wh_ModSettingsChanged") != std::string::npos, "Must declare Wh_ModSettingsChanged export");
     TEST_ASSERT(mod_src.find("Wh_ModUninit") != std::string::npos, "Must declare Wh_ModUninit export");
 
+    // Verify shell targets and stability invariants
+    TEST_ASSERT(mod_src.find("@include         explorer.exe") == std::string::npos, "explorer.exe must NOT be included (causes taskbar crash/restart)");
+    TEST_ASSERT(mod_src.find("@include         ShellHost.exe") != std::string::npos, "ShellHost.exe must be included");
+    TEST_ASSERT(mod_src.find("@include         ShellExperienceHost.exe") != std::string::npos, "ShellExperienceHost.exe must be included");
+    TEST_ASSERT(mod_src.find("CreateWindowExW") == std::string::npos, "CreateWindowExW hook must be removed for stability");
+    TEST_ASSERT(mod_src.find("wParam == PM_REMOVE") != std::string::npos, "PM_REMOVE check required in WH_GETMESSAGE hook to prevent heap corruption");
+
     // Ensure it is 100% self-contained: no #include "src/..." or relative directory includes
     TEST_ASSERT(mod_src.find("#include \"src/") == std::string::npos, "Self-contained bundle must NOT include relative src/ files");
     TEST_ASSERT(mod_src.find("#include \"calendar_engine/") == std::string::npos, "Self-contained bundle must not include relative calendar_engine/ headers");

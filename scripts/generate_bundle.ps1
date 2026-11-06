@@ -14,7 +14,6 @@ $bundleHeader = @'
 // @version         1.0.0
 // @author          Pedrofff23
 // @github          https://github.com/Pedrofff23/teams-mod
-// @include         explorer.exe
 // @include         ShellHost.exe
 // @include         ShellExperienceHost.exe
 // @architecture    x86-64
