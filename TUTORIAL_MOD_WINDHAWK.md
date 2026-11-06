@@ -155,9 +155,9 @@ The injected agenda panel strictly follows Windows 11 Fluent Design guidelines:
   - ⚪ **Past:** Finished meetings (`#797775`).
 
 ### One-Click Join Behavior & Security Dispatch
-- **Direct System Dispatch:** Clicking the **Join Meeting** button reads the sanitized URL from the XAML element and invokes `ShellExecuteW(NULL, L"open", url, NULL, NULL, SW_SHOWNORMAL)`.
+- **Direct System Dispatch:** Clicking the **Join Meeting** button reads the sanitized URL from the XAML element and invokes `winrt::Windows::System::Launcher::LaunchUriAsync` with `LauncherOptions.FallbackUri` to launch the native Microsoft Teams desktop client (`msteams:` protocol) with web fallback, falling back to `ShellExecuteW`.
 - **Desktop Client & Browser Routing:** If the Microsoft Teams desktop client is registered for `https://teams.microsoft.com` or `msteams:` protocols, Windows launches Teams directly. Otherwise, it opens in your default web browser.
-- **Protocol Sanitization:** To guarantee system security and prevent command injection, the URL dispatcher strictly allows only `https://`, `http://`, and `msteams:` protocols. Any attempt to pass executable binaries, shell scripts, or arbitrary URI schemes (e.g. `file:`, `cmd:`, `powershell:`, `javascript:`) is detected and blocked before reaching `ShellExecuteW`.
+- **Protocol Sanitization:** To guarantee system security and prevent command injection, the URL dispatcher strictly allows only `https://`, `http://`, and `msteams:` protocols. Any attempt to pass executable binaries, shell scripts, or arbitrary URI schemes (e.g. `file:`, `cmd:`, `powershell:`, `javascript:`) is detected and blocked before dispatching.
 - **SafeLinks Protection:** The extractor automatically unwraps Microsoft Defender SafeLinks (`*.safelinks.protection.outlook.com/?url=...`), routing directly to the target Teams meeting room without redirect delays.
 
 ---

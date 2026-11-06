@@ -118,6 +118,7 @@ Você também pode executar suítes específicas:
 - **Sem Intermediários na Nuvem**: O mod se comunica diretamente entre o seu computador e o servidor do Microsoft 365 / Outlook via HTTPS. Nenhum dado de calendário transita por servidores de terceiros.
 - **Sanitização de Links**: Todas as URLs são validadas contra uma lista estrita de esquemas permitidos (`https://`, `http://`, `msteams:`), impedindo a execução de protocolos maliciosos ou injeção de comandos.
 - **Sem Autenticação Insegura**: A leitura é feita via token de feed público/secreto publicado pelo próprio usuário, dispensando o armazenamento de senhas locais.
+- **Isolamento e Estabilidade da Barra de Tarefas**: O mod opera exclusivamente nos processos de flyout do shell (`ShellHost.exe` / `ShellExperienceHost.exe`), sem injetar hooks ou threads no processo principal da barra de tarefas (`explorer.exe`), prevenindo travamentos ou reinicializações do Windows Explorer.
 
 ---
 

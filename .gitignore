@@ -2,11 +2,16 @@
 .goose/
 .hermes/
 .worktrees/
+.vscode/
+.idea/
 *.exe
 *.o
 *.obj
 *.dll
 *.pdb
+*.log
+*.dmp
+*.tmp
 build/
 bin/
 
