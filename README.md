@@ -1,127 +1,133 @@
 # Microsoft Teams Calendar Flyout for Windows 11 (Windhawk Mod)
 
+[English](README.md) | [Português](README.pt-BR.md)
+
 [![Windhawk Mod](https://img.shields.io/badge/Windhawk-Mod-blue.svg)](https://windhawk.net/)
 [![Windows 11](https://img.shields.io/badge/Windows-11%20WinUI-0078D4.svg)](https://www.microsoft.com/windows)
 [![C++23](https://img.shields.io/badge/C%2B%2B-23-blue.svg)](https://en.cppreference.com/)
 [![Tests](https://img.shields.io/badge/Tests-Passing-brightgreen.svg)]()
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Mod para o **Windhawk** que restaura a integração da agenda do **Microsoft Teams** diretamente no menu suspenso de relógio e calendário da barra de tarefas do **Windows 11** (`ShellHost.exe` / `ShellExperienceHost.exe`).
-
----
-
-## 🎯 O Problema
-
-No Windows 11, a Microsoft redesenhou a bandeja do sistema e o submenu de calendário da barra de tarefas, removendo a visualização de agenda integrada que existia no Windows 10. Para profissionais e equipes que utilizam o Microsoft Teams no dia a dia, verificar horários de reuniões ou entrar em uma chamada exige abrir o aplicativo pesado do Teams ou navegar no portal web, interrompendo o foco do trabalho.
-
-## 🚀 A Solução
-
-Este mod injeta uma agenda moderna, elegante e interativa diretamente abaixo da grade de calendário do Windows 11:
-- 📅 **Sincronização em Segundo Plano**: Baixa periodicamente seus eventos do feed iCalendar (`.ics`) oficial do Outlook/Teams sem travar ou congelar a barra de tarefas.
-- 🔗 **Detecção Automática do Teams**: Identifica automaticamente reuniões do Microsoft Teams (empresariais, governamentais, pessoais ou via links seguros Outlook SafeLinks).
-- ⚡ **Entrar com 1 Clique ("One-Click Join")**: Botão interativo com design Fluent que abre a chamada diretamente no cliente desktop do Microsoft Teams ou no navegador padrão.
-- 🟢 **Indicadores de Status em Tempo Real**:
-  - `Ao Vivo / Live Now`: Reunião em andamento neste momento.
-  - `Em Breve / Starting Soon`: Reunião começando nos próximos 15 minutos.
-  - `Futuro / Upcoming`: Reuniões subsequentes do dia.
-  - `Passado / Past`: Eventos já concluídos (opcionalmente ocultáveis).
-- 🔁 **Expansão de Regras Recorrentes (RRULE)**: Suporte completo a reuniões diárias, semanais (ex: standups às segundas, quartas e sextas) e eventos recorrentes.
-- 🌓 **Adaptação Fluente a Temas**: Suporte nativo aos modos Claro (Light) e Escuro (Dark) do Windows 11 com cores e contrastes acessíveis.
-- 📆 **Navegação Dinâmica por Data**: Clique em qualquer dia na grade do calendário para ver imediatamente a agenda daquele dia.
-- 💾 **Resiliência Offline**: Armazenamento em cache seguro em memória; suas reuniões continuam visíveis mesmo sem conexão à internet.
+A lightweight [Windhawk](https://windhawk.net/) mod that restores upcoming **Microsoft Teams** daily agendas directly inside the native **Windows 11** taskbar calendar and notification flyout (`ShellHost.exe` / `ShellExperienceHost.exe`).
 
 ---
 
-## 📦 Estrutura do Projeto
+## 🎯 The Problem
+
+In Windows 11, Microsoft redesigned the taskbar notification center and clock flyout, removing the integrated daily agenda view that previously existed in Windows 10. For professionals and teams relying on Microsoft Teams throughout the day, checking upcoming meeting times or joining calls requires switching focus, opening the heavy Teams desktop client, or navigating through web portals.
+
+## 🚀 The Solution
+
+This mod injects a modern, responsive, Fluent Design agenda directly below the Windows 11 calendar month grid:
+- 📅 **Background Sync**: Periodically fetches and parses events from your official Outlook / Microsoft Teams iCalendar (`.ics`) feed without freezing the shell or taskbar.
+- 🔗 **Automatic Teams Detection**: Automatically identifies Teams meetings (commercial, GCC/government, personal, or wrapped inside Outlook SafeLinks).
+- ⚡ **One-Click Join**: Interactive Fluent Design "Join Meeting" button launching directly into the native Microsoft Teams app (`msteams:` protocol) with seamless browser fallback.
+- 🟢 **Real-Time Meeting Status Indicators**:
+  - `Live Now`: Meeting currently in progress.
+  - `Starting Soon`: Meeting starting within the next 15 minutes.
+  - `Upcoming`: Subsequent meetings scheduled for later today.
+  - `Past`: Completed meetings earlier today (optionally hidden).
+- 🔁 **Recurrence Expansion (RRULE)**: Full RFC 5545 recurrence engine expanding daily, weekly (e.g. Mon/Wed/Fri standups), and interval recurring events.
+- 🌓 **Fluent Theme Adaptability**: Automatically harmonizes with Windows 11 Light and Dark themes, respecting high-contrast modes and accessible palettes.
+- 📆 **Interactive Date Navigation**: Click any date on the calendar grid to instantly view the agenda for that day.
+- 💾 **Offline Resilience**: Thread-safe in-memory cache; your schedule remains readable even when disconnected from Wi-Fi or the internet.
+
+---
+
+## 📦 Project Structure
 
 ```text
-├── teams-calendar-flyout.wh.cpp     # Mod completo autocontido pronto para o Windhawk
-├── TUTORIAL_MOD_WINDHAWK.md        # Guia detalhado passo a passo de configuração e compilação
+├── teams-calendar-flyout.wh.cpp     # Self-contained mod bundle ready for Windhawk
+├── TUTORIAL_MOD_WINDHAWK.md        # Comprehensive step-by-step setup and developer guide
+├── README.md                       # Main English documentation
+├── README.pt-BR.md                 # Portuguese documentation
+├── LICENSE                         # MIT License
 ├── src/
-│   ├── calendar_engine/            # Módulo de processamento de calendário (RFC 5545)
-│   │   ├── ics_parser.h / .cpp     # Parser iCalendar, unfolding e expansão de recorrências (RRULE)
-│   │   ├── teams_extractor.h / .cpp# Extrator e sanitizador de links do Microsoft Teams
-│   │   └── meeting_status.h / .cpp # Cálculo temporal (Live, Soon, Future, Past)
-│   ├── mod/                        # Núcleo do mod Windhawk
-│   │   ├── mod_settings.h / .cpp   # Gerenciamento de configurações do usuário
-│   │   ├── calendar_cache.h / .cpp # Cache em memória thread-safe (shared_mutex)
-│   │   ├── http_fetcher.h / .cpp   # Worker assíncrono WinINet com timer
-│   │   └── teams_calendar_flyout.h # Hooks de ciclo de vida (Wh_ModInit, Wh_ModUninit)
-│   └── ui/                         # Apresentação e injeção XAML
-│       ├── agenda_view_model.h / .cpp # ViewModels, paletas de tema e ordenação cronológica
-│       └── xaml_injector.h / .cpp  # Injetor WinUI na árvore visual do CalendarCenterGrid
-├── tests/                          # Suíte de testes unitários e de integração
-│   ├── run_tests.ps1               # Executor de testes automatizados via in-process DLL
-│   ├── test_ics_parser.cpp         # Testes de parsing RFC 5545 e RRULE
-│   ├── test_teams_extractor.cpp    # Testes de extração de links e status
-│   ├── test_mod_skeleton_http.cpp  # Testes de cache multithread e ciclo de vida
-│   ├── test_agenda_ui.cpp          # Testes de ViewModel e marcação XAML Fluent
-│   └── test_one_click_join_guide.cpp # Testes de sanitização de URL e botão de entrada
+│   ├── calendar_engine/            # RFC 5545 calendar processing core
+│   │   ├── ics_parser.h / .cpp     # iCalendar parser, unfolding, and RRULE recurrence expansion
+│   │   ├── teams_extractor.h / .cpp# Microsoft Teams join link extraction and SafeLinks decoding
+│   │   └── meeting_status.h / .cpp # Temporal calculation (Live, Soon, Future, Past)
+│   ├── mod/                        # Windhawk mod lifecycle and shell integration
+│   │   ├── mod_settings.h / .cpp   # Mod settings parsing and validation
+│   │   ├── calendar_cache.h / .cpp # Thread-safe in-memory cache (std::shared_mutex)
+│   │   ├── http_fetcher.h / .cpp   # Background WinINet worker thread with timer loop
+│   │   └── teams_calendar_flyout.h # Lifecycle hooks (Wh_ModInit, Wh_ModUninit)
+│   └── ui/                         # WinUI / XAML presentation layer
+│       ├── agenda_view_model.h / .cpp # ViewModels, color palettes, and chronological sorting
+│       └── xaml_injector.h / .cpp  # Visual tree discovery and container management
+├── tests/                          # Unit and integration test suites
+│   ├── run_tests.ps1               # Automated test runner via in-process DLL
+│   ├── test_ics_parser.cpp         # RFC 5545 parsing and recurrence tests
+│   ├── test_teams_extractor.cpp    # Link extraction and temporal status tests
+│   ├── test_mod_skeleton_http.cpp  # Multithreaded cache and lifecycle tests
+│   ├── test_agenda_ui.cpp          # ViewModel and Fluent UI tests
+│   └── test_one_click_join_guide.cpp # URL sanitization, stability assertions, and bundle tests
 └── scripts/
-    └── generate_bundle.ps1         # Script gerador do bundle autocontido para distribuição
+    └── generate_bundle.ps1         # Script bundling src/ into teams-calendar-flyout.wh.cpp
 ```
 
 ---
 
-## 🛠️ Como Instalar e Usar no Windhawk
+## 🛠️ How to Install and Use in Windhawk
 
-### Pré-requisitos
-1. Windows 11 (build 22H2 ou superior).
-2. [Windhawk](https://windhawk.net/) instalado.
+### Prerequisites
+1. Windows 11 (build 22H2 or higher).
+2. [Windhawk](https://windhawk.net/) installed.
 
-### Passo 1: Obter o link ICS do seu calendário
-1. Acesse o **Outlook na Web** ([outlook.office.com](https://outlook.office.com)).
-2. Clique no ícone de **Configurações** (engrenagem no canto superior direito).
-3. Vá em **Calendário** ➔ **Calendários compartilhados**.
-4. Na seção **Publicar um calendário**, selecione seu calendário, escolha a permissão (*"Pode exibir todos os detalhes"*) e clique em **Publicar**.
-5. Copie o link **ICS** gerado (inicia com `https://outlook.office365.com/.../reachcalendar.ics`).
+### Step 1: Obtain Your Calendar ICS Link
+1. Open **Outlook on the Web** ([outlook.office.com](https://outlook.office.com)).
+2. Click the gear icon (**Settings**) in the top right corner.
+3. Navigate to **Calendar** ➔ **Shared calendars**.
+4. Under **Publish a calendar**, select your calendar, choose permissions (*"Can view all details"*), and click **Publish**.
+5. Copy the generated **ICS link** (begins with `https://outlook.office365.com/.../reachcalendar.ics`).
 
-### Passo 2: Carregar o Mod no Windhawk
-1. Abra o aplicativo **Windhawk**.
-2. Vá na aba inferior e ative o **Modo de Desenvolvedor** (*Developer Mode*).
-3. Clique em **Create Mod** (Criar Mod).
-4. No editor de código do Windhawk, cole o conteúdo completo do arquivo [`teams-calendar-flyout.wh.cpp`](./teams-calendar-flyout.wh.cpp).
-5. Clique em **Save & Compile** (Salvar e Compilar).
-6. Acesse a aba **Settings** (Configurações) do mod no Windhawk:
-   - **Outlook / Teams ICS Feed URL**: Cole o link ICS que você copiou no Passo 1.
-   - **Refresh Interval (minutes)**: Intervalo de atualização (padrão: 15 minutos).
-   - **Show Past Events**: Marque se deseja exibir reuniões passadas do dia atual.
-   - **Enable One-Click Join Button**: Mantém o botão de entrada direta ativo.
-7. Clique em **Accept** para salvar as configurações.
+### Step 2: Load the Mod into Windhawk
+1. Open the **Windhawk** application.
+2. In the bottom-left corner, switch to or enable **Developer Mode**.
+3. Click **Create Mod** (or **+ New Mod**).
+4. In the code editor tab, replace all default code with the contents of [`teams-calendar-flyout.wh.cpp`](./teams-calendar-flyout.wh.cpp).
+5. Click **Save & Compile**.
+6. Switch to the **Settings** tab of the mod in Windhawk:
+   - **Outlook / Teams ICS Feed URL**: Paste the ICS link copied in Step 1.
+   - **Refresh Interval (minutes)**: Update frequency (default: 15 minutes).
+   - **Show Past Events**: Check if you want completed meetings from earlier today to remain visible.
+   - **Enable One-Click Join Button**: Keeps the direct join button active.
+7. Click **Accept** to save settings.
 
-Pronto! Ao clicar no relógio da barra de tarefas para abrir o calendário do Windows 11, sua agenda do Microsoft Teams será exibida com status em tempo real e botão de entrada direta.
+Open your Windows 11 clock flyout (by clicking the taskbar clock) to view your upcoming Teams agenda!
 
-Para um guia com capturas de tela e resolução de problemas, consulte o documento [`TUTORIAL_MOD_WINDHAWK.md`](./TUTORIAL_MOD_WINDHAWK.md).
+For an illustrated walkthrough with troubleshooting, see [`TUTORIAL_MOD_WINDHAWK.md`](./TUTORIAL_MOD_WINDHAWK.md).
 
 ---
 
-## 🧪 Executando os Testes Automatizados
+## 🧪 Running Automated Tests
 
-O projeto conta com mais de 30 testes unitários e de integração cobrindo todas as camadas sem dependência de janelas ativas da interface do usuário.
+The project includes over 30 unit and integration tests covering all layers without requiring active desktop windows or live UI sessions.
 
-Para executar toda a suíte de testes no PowerShell:
+To run the entire test suite in PowerShell:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tests/run_tests.ps1 -Suite all
 ```
 
-Você também pode executar suítes específicas:
-- `-Suite ics`: Testa o parser RFC 5545, decodificação de texto e regras RRULE.
-- `-Suite teams`: Testa extração de URLs, SafeLinks e cálculo de status temporal.
-- `-Suite mod`: Testa configurações, cache thread-safe e worker HTTP WinINet.
-- `-Suite ui`: Testa geração de marcação WinUI XAML e ViewModels.
-- `-Suite join`: Testa sanitização de URLs e botão de entrada com 1 clique.
+You can also run individual test suites:
+- `-Suite ics`: Tests the RFC 5545 parser, unfolding, and RRULE engine.
+- `-Suite teams`: Tests URL extraction, SafeLinks decoding, and status calculations.
+- `-Suite mod`: Tests settings validation, thread-safe cache, and the WinINet worker.
+- `-Suite ui`: Tests WinUI XAML formatting and ViewModels.
+- `-Suite join`: Tests URL sanitization, stability assertions, and bundle integrity.
 
 ---
 
-## 🔒 Segurança e Privacidade
+## 🔒 Security, Privacy & Shell Stability
 
-- **Sem Intermediários na Nuvem**: O mod se comunica diretamente entre o seu computador e o servidor do Microsoft 365 / Outlook via HTTPS. Nenhum dado de calendário transita por servidores de terceiros.
-- **Sanitização de Links**: Todas as URLs são validadas contra uma lista estrita de esquemas permitidos (`https://`, `http://`, `msteams:`), impedindo a execução de protocolos maliciosos ou injeção de comandos.
-- **Sem Autenticação Insegura**: A leitura é feita via token de feed público/secreto publicado pelo próprio usuário, dispensando o armazenamento de senhas locais.
-- **Isolamento e Estabilidade da Barra de Tarefas**: O mod opera exclusivamente nos processos de flyout do shell (`ShellHost.exe` / `ShellExperienceHost.exe`), sem injetar hooks ou threads no processo principal da barra de tarefas (`explorer.exe`), prevenindo travamentos ou reinicializações do Windows Explorer.
+- **Direct HTTPS Connection**: Connects directly between your local machine and Microsoft 365 / Outlook endpoints. No intermediary servers, third-party proxies, or cloud relays.
+- **Protocol Sanitization**: All meeting URLs are validated against a strict protocol allowlist (`https://`, `http://`, `msteams:`), preventing command injection or execution of arbitrary URI schemes.
+- **Credential-Free**: Uses published iCalendar tokens generated by your account, eliminating the need to store passwords or access tokens locally.
+- **Taskbar Process Isolation**: The mod injects exclusively into the Windows 11 flyout hosts (`ShellHost.exe` / `ShellExperienceHost.exe`). It intentionally **never** injects into `explorer.exe`, eliminating hooks or worker threads in the main taskbar process to prevent shell crashes or restarts.
 
 ---
 
-## 📄 Licença
+## 📄 License
 
-Distribuído sob a licença MIT. Consulte `LICENSE` para mais informações.
+Distributed under the MIT License. See [`LICENSE`](LICENSE) for details.
